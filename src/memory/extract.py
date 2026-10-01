@@ -47,7 +47,9 @@ Return JSON with these keys (use [] when nothing applies):
 - "entities": [{{"name": str, "kind": "company|person|project|topic|place|tool|org"}}]
   Always include the broad ongoing life area as a topic (e.g. "Job search", "Health",
   "Fitness", "Finances", "Learning Rust") so related events group together.
-- "episodes": things that HAPPENED — one episode per company / person / item involved:
+- "episodes": things that HAPPENED in the user's work or life — one episode per company / person / item involved.
+  Outcomes count (shipped a release, fixed a production bug, applied, decided); the coding session itself,
+  tool/agent operations, builds, emulator runs and "we discussed X" do NOT.
   "applied to Zomato and Swiggy" is TWO "applied" episodes, one for each company.
   [{{"kind": "applied|interview|offer|rejection|decision|meeting|milestone|incident|task_done|
     purchase|travel|learning|conversation|other", "summary": str (one sentence, past tense),

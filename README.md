@@ -117,7 +117,7 @@ ollama pull nomic-embed-text            # embeddings run locally and free
 
 cat > .env <<'ENV'
 CONNECTION_STRING=postgresql+asyncpg://postgres:postgres@localhost:5432/engram
-DATA_DIR=data/examples                  # point at your own documents (keep them out of git)
+DATA_DIR=data/examples                  # text files imported once on first start (optional)
 USER_NAME=Alex                          # how prompts refer to you
 USER_TZ=Asia/Kolkata                    # "yesterday" means *your* yesterday
 TOGETHER_API_KEY=...                    # or GEMINI_/GROQ_/MISTRAL_/OPENAI_/ANTHROPIC_API_KEY
@@ -159,6 +159,18 @@ starting a task, call `recall` with my words. When I share a fact, preference, d
 call `remember`."*
 
 **Tools:** `recall` · `remember` · `note` · `teach` · `expand` · `timeline` · `forget`
+
+## Your documents
+
+Resume, projects, skills, experience and education live in the database and are edited in the
+browser at **http://localhost:8001/admin** — no files, no reseeding. Write plain text: `Key: value`
+lines at the top become fields, a line like `Summary:` starts a section; both are re-derived and the
+document is re-embedded on every save, so recall sees the change immediately. Documents appear in
+briefs under *Documents* (e.g. `[d:resume/master_resume]`).
+
+Text files are only an import path: on an empty database Engram imports `DATA_DIR`
+(`data/examples/` ships a fictional sample), and **Import new files** adds files that aren't in the
+database yet. Importing never overwrites a document you've edited.
 
 ## See what it knows
 

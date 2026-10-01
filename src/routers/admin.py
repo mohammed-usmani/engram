@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -13,10 +12,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.database import get_session
 from src.models import ContextDocument, DocType, Source
+import logging
+
 from src.seed.loader import run_seed
+from src.seed.parser import derive_fields
+from src.services.ollama_client import embed
 from src.services.embeddings import embed_all_documents
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+async def _refresh_derived(doc: ContextDocument) -> None:
+    """Sections/metadata come from the text, and search must see the edit immediately."""
+    doc.sections, doc.doc_metadata = derive_fields(doc.content)
+    try:
+        doc.embedding = await embed(f"{doc.title}\n{doc.content}"[:6000])
+    except Exception as e:  # Ollama down: keep the edit, re-embed later via /api/admin/embed
+        log.warning("re-embed failed for %s: %s", doc.slug, e)
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
@@ -40,14 +53,7 @@ def _parse_tags(raw: str) -> list[str]:
     return [t.strip().lower() for t in (raw or "").split(",") if t.strip()]
 
 
-def _parse_json(raw: str) -> dict:
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
-    return json.loads(raw)
-
-
-# Register /reseed on a separate router so it wins the path match over /{slug:path}.
+# Registered on a separate router so these win the path match over /{slug:path}.
 reseed_router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
@@ -116,14 +122,15 @@ async def dump_all(
     )
 
 
-@reseed_router.post("/reseed")
-async def reseed(
+@reseed_router.post("/import")
+async def import_files(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
+    """Add documents from DATA_DIR that aren't in the database yet. Never overwrites."""
     summary = await run_seed(session, settings.data_dir)
     await session.commit()
-    return RedirectResponse(f"/api/admin?reseed={summary}", status_code=303)
+    return RedirectResponse(f"/api/admin?import={summary}", status_code=303)
 
 
 @router.get("", response_class=HTMLResponse)
@@ -147,7 +154,7 @@ async def admin_index(
     return templates.TemplateResponse("list.html", {
         "request": request, "docs": docs,
         "types": [t.value for t in DocType], "type": type, "q": q,
-        "reseed_summary": request.query_params.get("reseed"),
+        "import_summary": request.query_params.get("import"),
         "active_page": "documents",
     })
 
@@ -169,15 +176,11 @@ async def new_submit(
     title: str = Form(...),
     tags: str = Form(""),
     content: str = Form(...),
-    sections: str = Form("{}"),
-    metadata: str = Form("{}"),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
     try:
         doc_type = DocType(type)
-        parsed_sections = _parse_json(sections)
-        parsed_metadata = _parse_json(metadata)
     except Exception as e:
         return templates.TemplateResponse("edit.html", {
             "request": request, "is_new": True, "doc": None,
@@ -193,10 +196,10 @@ async def new_submit(
             i += 1
         chosen_slug = f"{chosen_slug}-{i}"
 
-    session.add(ContextDocument(
-        type=doc_type, slug=chosen_slug, title=title, tags=_parse_tags(tags),
-        content=content, sections=parsed_sections, source=Source.MANUAL, doc_metadata=parsed_metadata,
-    ))
+    doc = ContextDocument(type=doc_type, slug=chosen_slug, title=title, tags=_parse_tags(tags),
+                          content=content, sections={}, source=Source.MANUAL, doc_metadata={})
+    await _refresh_derived(doc)
+    session.add(doc)
     await session.commit()
     return RedirectResponse(f"/api/admin/{chosen_slug}", status_code=303)
 
@@ -238,8 +241,6 @@ async def edit_submit(
     title: str = Form(...),
     tags: str = Form(""),
     content: str = Form(...),
-    sections: str = Form("{}"),
-    metadata: str = Form("{}"),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
@@ -251,8 +252,8 @@ async def edit_submit(
         doc.title = title
         doc.tags = _parse_tags(tags)
         doc.content = content
-        doc.sections = _parse_json(sections)
-        doc.doc_metadata = _parse_json(metadata)
+        doc.source = Source.MANUAL
+        await _refresh_derived(doc)
     except Exception as e:
         return templates.TemplateResponse("edit.html", {
             "request": request, "is_new": False, "doc": doc,

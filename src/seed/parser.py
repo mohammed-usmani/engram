@@ -25,13 +25,8 @@ _KV_LINE_RE = re.compile(r"^([A-Z][A-Za-z0-9 &/'\-]{1,60}):\s+(.+?)\s*$")
 _TITLE_KEYS = ("Title", "Skill Name", "Name")
 
 
-def parse_file(path: Path) -> dict[str, Any]:
-    parent = path.parent.name
-    if parent not in _DIR_TO_TYPE:
-        raise ValueError(f"Unknown context directory: {parent}")
-    doc_type = _DIR_TO_TYPE[parent]
-
-    raw = path.read_text(encoding="utf-8")
+def parse_text(raw: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Split document text into `Key: value` header fields and `Section:` blocks."""
     lines = raw.splitlines()
 
     headers: dict[str, str] = {}
@@ -73,6 +68,23 @@ def parse_file(path: Path) -> dict[str, Any]:
             current_buf.append(line)
 
     _flush()
+    return headers, sections
+
+
+def derive_fields(raw: str) -> tuple[dict[str, str], dict[str, str]]:
+    """(sections, metadata) for a document's text — used whenever a document is saved."""
+    headers, sections = parse_text(raw)
+    return sections, {k: v for k, v in headers.items() if k not in _TITLE_KEYS}
+
+
+def parse_file(path: Path) -> dict[str, Any]:
+    parent = path.parent.name
+    if parent not in _DIR_TO_TYPE:
+        raise ValueError(f"Unknown context directory: {parent}")
+    doc_type = _DIR_TO_TYPE[parent]
+
+    raw = path.read_text(encoding="utf-8")
+    headers, sections = parse_text(raw)
 
     title: str | None = None
     for k in _TITLE_KEYS:

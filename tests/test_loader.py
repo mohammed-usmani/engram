@@ -16,7 +16,6 @@ async def test_seeds_empty_db(session, tmp_path):
     summary = await run_seed(session, tmp_path)
     await session.commit()
     assert summary["inserted"] == 2
-    assert summary["updated"] == 0
     assert summary["errors"] == 0
 
     rows = (await session.execute(select(ContextDocument))).scalars().all()
@@ -24,19 +23,20 @@ async def test_seeds_empty_db(session, tmp_path):
     assert slugs == {"skill/python", "project/x"}
 
 
-async def test_reseed_is_idempotent_and_updates_file_rows(session, tmp_path):
+async def test_import_never_overwrites_the_database(session, tmp_path):
+    """The database is the source of truth: files are only imported once, as site-editable docs."""
     _write(tmp_path, "skills", "python.txt", "Type: Skill\n\nSkill Name: Python\n\nSummary:\nOld.\n")
     await run_seed(session, tmp_path)
     await session.commit()
+    row = (await session.execute(select(ContextDocument).where(ContextDocument.slug == "skill/python"))).scalar_one()
+    assert row.source == Source.MANUAL
 
     (tmp_path / "skills" / "python.txt").write_text("Type: Skill\n\nSkill Name: Python\n\nSummary:\nNew.\n")
     summary = await run_seed(session, tmp_path)
     await session.commit()
-    assert summary["inserted"] == 0
-    assert summary["updated"] == 1
-    row = (await session.execute(select(ContextDocument).where(ContextDocument.slug == "skill/python"))).scalar_one()
-    assert "New." in row.sections.get("Summary", "")
-    assert row.source == Source.FILE
+    assert summary["inserted"] == 0 and summary["skipped"] == 1
+    await session.refresh(row)
+    assert "Old." in row.sections.get("Summary", "")
 
 
 async def test_reseed_preserves_manual_rows(session, tmp_path):

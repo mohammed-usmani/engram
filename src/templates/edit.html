@@ -53,11 +53,6 @@
   <a href="/api/admin" class="back-link">← Back to documents</a>
 </div>
 
-{% if not is_new and doc.source.value == "file" %}
-  <div class="banner">
-    This document's source is <code>file</code>. Reseeding from disk will overwrite it — edit the source file at <code>data/contexts/</code> instead unless you want a one-shot override.
-  </div>
-{% endif %}
 
 {% if error %}
   <div class="banner banner-error">{{ error }}</div>
@@ -94,17 +89,18 @@
       placeholder="e.g. python, backend, api">
   </label>
 
-  <label>Content
-    <textarea name="content" required>{{ '' if is_new else doc.content }}</textarea>
+  <label>Content <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">
+    (<code>Key: value</code> lines at the top become fields; a line like <code>Summary:</code> starts a section)</span>
+    <textarea name="content" required style="min-height:420px">{{ '' if is_new else doc.content }}</textarea>
   </label>
 
-  <label>Sections <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(JSON, optional)</span>
-    <textarea name="sections" style="min-height:80px">{{ '{}' if is_new else (doc.sections | tojson) }}</textarea>
-  </label>
-
-  <label>Metadata <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(JSON, optional)</span>
-    <textarea name="metadata" style="min-height:80px">{{ '{}' if is_new else (doc.doc_metadata | tojson) }}</textarea>
-  </label>
+  {% if not is_new and (doc.doc_metadata or doc.sections) %}
+  <div class="banner" style="font-size:0.82rem">
+    {% if doc.doc_metadata %}<b>Fields:</b> {% for k, v in doc.doc_metadata.items() %}{{ k }} = {{ v }}{{ "" if loop.last else " · " }}{% endfor %}<br>{% endif %}
+    {% if doc.sections %}<b>Sections:</b> {{ doc.sections.keys() | join(", ") }}{% endif %}
+    <span style="color:var(--text-muted)"> — derived from the text on every save</span>
+  </div>
+  {% endif %}
 
   <div class="form-actions">
     <button type="submit" class="btn-primary">Save</button>

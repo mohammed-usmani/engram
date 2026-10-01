@@ -13,7 +13,12 @@ log = logging.getLogger(__name__)
 
 
 async def run_seed(session: AsyncSession, data_dir: Path) -> dict[str, int]:
-    summary = {"inserted": 0, "updated": 0, "skipped": 0, "errors": 0}
+    """Import documents from text files that aren't in the database yet.
+
+    The database is the source of truth (documents are edited on the site), so an existing slug is
+    never overwritten — files are only a way to bring documents in.
+    """
+    summary = {"inserted": 0, "skipped": 0, "errors": 0}
     files = sorted(Path(data_dir).rglob("*.txt"))
     for path in files:
         try:
@@ -36,18 +41,10 @@ async def run_seed(session: AsyncSession, data_dir: Path) -> dict[str, int]:
                 tags=payload["tags"],
                 content=payload["content"],
                 sections=payload["sections"],
-                source=Source.FILE,
+                source=Source.MANUAL,
                 doc_metadata=payload["metadata"],
             ))
             summary["inserted"] += 1
-        elif existing.source == Source.FILE:
-            existing.title = payload["title"]
-            existing.tags = payload["tags"]
-            existing.content = payload["content"]
-            existing.sections = payload["sections"]
-            existing.doc_metadata = payload["metadata"]
-            existing.type = payload["type"]
-            summary["updated"] += 1
         else:
             summary["skipped"] += 1
 

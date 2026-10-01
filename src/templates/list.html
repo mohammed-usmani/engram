@@ -66,14 +66,14 @@
   </div>
 </div>
 
-{% if reseed_summary %}
-  <div class="banner">Reseed: {{ reseed_summary }}</div>
+{% if import_summary %}
+  <div class="banner">Import: {{ import_summary }}</div>
 {% endif %}
 
 <div class="list-toolbar">
   <span class="doc-count">{{ docs | length }} document{{ 's' if docs | length != 1 else '' }}</span>
-  <form method="post" action="/api/admin/reseed">
-    <button type="submit" style="font-size:0.8rem;padding:0.3rem 0.7rem;">Reseed from files</button>
+  <form method="post" action="/api/admin/import" title="Adds documents from DATA_DIR that aren't here yet. Never overwrites your edits.">
+    <button type="submit" style="font-size:0.8rem;padding:0.3rem 0.7rem;">Import new files</button>
   </form>
 </div>
 
@@ -83,7 +83,7 @@
     <tr>
       <th>Title</th>
       <th>Type</th>
-      <th>Source</th>
+      <th>Edited</th>
       <th>Tags</th>
       <th>Updated</th>
       <th>Slug</th>
@@ -94,7 +94,7 @@
     <tr>
       <td><a href="/api/admin/{{ d.slug }}">{{ d.title }}</a></td>
       <td><span class="tag">{{ d.type.value }}</span></td>
-      <td><span class="tag">{{ d.source.value }}</span></td>
+      <td style="white-space:nowrap;color:var(--text-muted)">{{ d.updated_at.strftime('%Y-%m-%d') }}</td>
       <td>{% for t in d.tags %}<span class="tag">{{ t }}</span> {% endfor %}</td>
       <td>{{ d.updated_at.strftime('%Y-%m-%d') }}</td>
       <td><code>{{ d.slug }}</code></td>

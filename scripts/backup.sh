@@ -40,6 +40,8 @@ echo "backup: $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f1)) — $(tr '\n' ' ' < "
 ls -1t "$OUT"/engram-*.tar.age 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r f; do rm -f "$f"; done
 
 if git -C "$OUT" rev-parse --git-dir >/dev/null 2>&1; then
-  git -C "$OUT" add -A . && git -C "$OUT" commit -qm "backup $NAME" && \
-    { git -C "$OUT" push -q 2>/dev/null || echo "warning: push failed; archive kept locally" >&2; }
+  # several machines may push to the same private repo; archives have unique names, so a rebase never conflicts
+  git -C "$OUT" add -A . && git -C "$OUT" commit -qm "backup $NAME on $(uname -n)" && \
+    { { git -C "$OUT" pull -q --rebase 2>/dev/null; git -C "$OUT" push -q 2>/dev/null; } \
+      || echo "warning: push failed; archive kept locally" >&2; }
 fi

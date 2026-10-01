@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +82,11 @@ async def memories_page(
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     return _templates.TemplateResponse("settings.html", {"request": request, "active_page": "settings"})
+
+
+@app.get("/admin", include_in_schema=False)
+async def admin_shortcut():
+    return RedirectResponse("/api/admin")
 
 
 @app.get("/api/health")

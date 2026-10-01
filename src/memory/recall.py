@@ -238,7 +238,14 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
     except Exception as e:  # fact store down: fall back to the last snapshot from the sleep pass
         log.warning("live profile unavailable: %s", e)
         live = ""
-    prof = None if live else await session.get(MemoryBlock, "profile")
+    prof = await session.get(MemoryBlock, "profile")
+    if live and (prof is None or prof.content != live):
+        # keep the fallback snapshot as fresh as the last successful recall
+        if prof is None:
+            session.add(MemoryBlock(name="profile", content=live))
+        else:
+            prof.content = live
+        await session.commit()
     pinned.append("## You\n" + (live or (prof.content if prof else "(no profile yet — memory is still learning about you)")))
     if session_id:
         notes = (await session.execute(select(SessionState).where(

@@ -95,3 +95,14 @@ async def test_profile_is_live_so_forgotten_facts_vanish(session, mem0_store):
     brief = (await recall.recall(session, "anything", fast=True))["brief"]
     assert "Lives in Pune" in brief
     assert "Groq key" not in brief and "stale snapshot" not in brief
+
+
+async def test_live_profile_refreshes_the_fallback_snapshot(session, mem0_store):
+    from src.memory.models import MemoryBlock
+    await facts.add_fact("Lives in Pune", kind="fact", entities=[], importance=5)
+    session.add(MemoryBlock(name="profile", content="- stale snapshot"))
+    await session.commit()
+    await recall.recall(session, "anything", fast=True)
+    block = await session.get(MemoryBlock, "profile")
+    await session.refresh(block)
+    assert "Lives in Pune" in block.content and "stale" not in block.content

@@ -1,0 +1,14 @@
+# Engram memory server: REST + MCP (/mcp) + worker on 127.0.0.1:8001.  Installed by scripts/systemd/install.sh
+[Unit]
+Description=Engram memory server
+After=network-online.target docker.service ollama.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=__REPO__
+ExecStart=__UV__ run uvicorn main:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

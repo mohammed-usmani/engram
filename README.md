@@ -130,7 +130,7 @@ uv run uvicorn main:app --host 127.0.0.1 --port 8001
 ```
 
 On macOS, `scripts/launchd/install.sh` installs it as a login service (plus nightly backups).
-Linux: a systemd user unit running the same `uvicorn` command works.
+On Linux, `scripts/systemd/install.sh` does the same with systemd user units (`sudo loginctl enable-linger $USER` keeps it running while logged out).
 
 Try it:
 

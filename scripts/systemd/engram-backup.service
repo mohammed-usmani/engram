@@ -1,0 +1,8 @@
+# Encrypted Engram backup (scripts/backup.sh). Triggered by engram-backup.timer.
+[Unit]
+Description=Engram encrypted backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=__REPO__
+ExecStart=__REPO__/scripts/backup.sh

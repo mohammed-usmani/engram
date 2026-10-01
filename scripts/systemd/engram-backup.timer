@@ -1,0 +1,10 @@
+# Nightly at 02:30; Persistent=true runs a missed backup at next boot if the laptop was off.
+[Unit]
+Description=Nightly Engram backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

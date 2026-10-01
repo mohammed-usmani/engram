@@ -53,10 +53,13 @@ Return JSON with these keys (use [] when nothing applies):
     purchase|travel|learning|conversation|other", "summary": str (one sentence, past tense),
     "when": ISO date or datetime (resolve "yesterday", "last Friday" against now),
     "entities": [names], "outcome": str|null, "sentiment": -1..1|null, "importance": 1-5}}]
-- "facts": durable truths about the user, their preferences, setup, people, goals — NOT events
+- "facts": durable truths about the user, their preferences, setup, people, goals — NOT events.
+  Each fact must stand alone months later: name the project, product or person, never "the app" / "this repo"
   (anything with a date or "yesterday/today" is an episode, not a fact):
   [{{"text": str (standalone sentence), "kind": "fact|preference", "entities": [names], "importance": 1-5}}]
-- "procedures": how the user does something step by step: [{{"name": str, "steps": [str], "entities": [names]}}]
+- "procedures": repeatable workflows the user does again and again, with 2+ steps
+  (how they deploy, apply for jobs, release an app): [{{"name": str, "steps": [str], "entities": [names]}}]
+  One-off to-dos and next steps from this conversation are NOT procedures — put them in "session_notes".
 - "session_notes": temporary constraints for the current task (deadlines, formats): [{{"key": str, "value": str}}]
 
 Importance: 5 = life-changing/identity, 4 = major, 3 = normal, 2 = minor, 1 = trivia.
@@ -185,7 +188,7 @@ async def extract(text: str, occurred_at: datetime, known: list[str] | None = No
                 for f in _list(data, "facts") if isinstance(f.get("text"), str) and f["text"].strip()]
     ex.procedures = [{"name": str(p.get("name") or "procedure"), "steps": _names(p.get("steps")),
                       "entities": _names(p.get("entities"))}
-                     for p in _list(data, "procedures") if _names(p.get("steps"))]
+                     for p in _list(data, "procedures") if len(_names(p.get("steps"))) >= 2]  # 1 step = a to-do
     ex.session_notes = [{"key": str(n["key"])[:255], "value": str(n["value"])}
                         for n in _list(data, "session_notes") if n.get("key") and n.get("value")]
     return ex

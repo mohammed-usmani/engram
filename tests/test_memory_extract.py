@@ -109,3 +109,14 @@ async def test_multi_company_career_event_is_split(monkeypatch):
     assert [sorted(e["entities"]) for e in ex.episodes] == [
         ["Job search", "SDE-2", "Zomato"], ["Job search", "SDE-2", "Swiggy"]]
     assert all(e["occurred_at"].date().isoformat() == "2026-09-28" for e in ex.episodes)
+
+
+async def test_one_off_todos_are_not_procedures(monkeypatch):
+    async def fake(prompt, system="", task="default"):
+        assert "repeatable" in prompt and "never \"the app\"" in prompt
+        return {"procedures": [
+            {"name": "Deciding to merge the branch into main", "steps": ["Decide whether to merge feat/x"]},
+            {"name": "deploy cityfix", "steps": ["run tests", "build image", "push", "verify"]}]}
+    monkeypatch.setattr(extract, "complete_json", fake)
+    ex = await extract.extract("...", datetime(2026, 10, 1, tzinfo=timezone.utc))
+    assert [p["name"] for p in ex.procedures] == ["deploy cityfix"]

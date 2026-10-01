@@ -6,9 +6,12 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 from sqlalchemy import text
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 load_dotenv()
+
+from src.database import get_session  # noqa: E402
 
 # Use TEST_DATABASE_URL if set; otherwise derive from CONNECTION_STRING by swapping the db name.
 _prod_url = os.getenv("CONNECTION_STRING", "")
@@ -87,3 +90,17 @@ async def mem0_store(monkeypatch, tmp_path):
     yield m
     await facts.wipe()
     facts._reset()
+
+
+@pytest_asyncio.fixture
+async def client(engine, mem0_store, monkeypatch):
+    from main import app
+    Session = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    async def _session():
+        async with Session() as s:
+            yield s
+    app.dependency_overrides[get_session] = _session
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()

@@ -160,6 +160,23 @@ call `remember`."*
 
 **Tools:** `recall` · `remember` · `note` · `teach` · `expand` · `timeline` · `forget`
 
+## See what it knows
+
+Open **http://localhost:8001/memory** for a browser view of the whole memory:
+
+| Tab | Shows |
+|---|---|
+| **Overview** | counts per layer, topics with their summaries, recent events, last backup — and a **recall box**: type what you'd say to an assistant and see the exact brief it would receive |
+| **Topics** | every entity (project, company, topic…) with event counts and its "so far" summary; click through to its timeline |
+| **Events** | everything that happened, filterable by text, kind and topic |
+| **Facts** | facts, preferences and procedures, searchable (superseded ones are hidden but kept) |
+| **Lessons** | reflections with confidence and how many events support them |
+| **Notes** | short-term notes for tasks in progress |
+| **Queue** | every `remember` / session save, what it extracted, errors — with **Retry** |
+
+Anything wrong? **Forget** removes it everywhere at once — including the profile at the top of every
+brief, which is built live from your current facts.
+
 ## Choosing the extraction model
 
 Every memory write costs one LLM call (plus a small one when a new fact may contradict an old one).
@@ -211,7 +228,7 @@ Results at the time of writing:
 | `GET /api/memory/jobs` · `POST …/jobs/{id}/retry` | extraction queue status / retry |
 | `POST /api/memory/consolidate` | run the sleep pass soon |
 
-Engram also ships a small admin UI (`/admin`), a document store with hybrid search, and a RAG chat
+Engram also ships a document manager (`/admin`), a document store with hybrid search, and a RAG chat
 (`/chat`) over your documents.
 
 ## Development
@@ -223,7 +240,7 @@ uv run pytest
 
 ```
 src/memory/      models · llm (provider chain) · facts (mem0) · entities · extract · ingest
-                 recall · consolidate · worker · api · backfill
+                 recall · consolidate · worker · api · dashboard (/memory) · backfill
 src/mcp_server.py  MCP tools (also served at /mcp by main.py)
 scripts/         claude_memory_hook.py · eval_extraction.py · backup.sh · restore.sh · launchd/
 data/examples/   fictional sample documents

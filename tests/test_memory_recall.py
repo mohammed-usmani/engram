@@ -83,3 +83,15 @@ async def test_expand_timeline_forget(session, mem0_store):
     assert (await recall.expand(session, first))["summary"].startswith("Applied to Acme")
     assert await recall.forget(session, first) is True
     assert await recall.expand(session, first) is None
+
+
+async def test_profile_is_live_so_forgotten_facts_vanish(session, mem0_store):
+    from src.memory.models import MemoryBlock
+    keep = await facts.add_fact("Lives in Pune", kind="fact", entities=[], importance=5)
+    gone = await facts.add_fact("The app now includes a Groq key", kind="fact", entities=[], importance=4)
+    session.add(MemoryBlock(name="profile", content="- The app now includes a Groq key\n- stale snapshot"))
+    await session.commit()
+    await recall.forget(session, f"f:{gone}")
+    brief = (await recall.recall(session, "anything", fast=True))["brief"]
+    assert "Lives in Pune" in brief
+    assert "Groq key" not in brief and "stale snapshot" not in brief

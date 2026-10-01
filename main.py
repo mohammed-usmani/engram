@@ -17,6 +17,7 @@ from src.routers import documents, admin, chat, memories, settings as settings_r
 from src.seed.loader import run_seed
 from src.services.memory import list_memories as _list_all_memories
 from src.memory.api import AuthMiddleware, router as memory_router
+from src.memory.dashboard import router as dashboard_router
 from src.memory.worker import run_worker
 from src.mcp_server import mcp
 
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Engram", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
 app.include_router(memory_router)
+app.include_router(dashboard_router)
 app.include_router(admin.reseed_router)
 app.include_router(admin.router)
 app.include_router(chat.router)

@@ -6,20 +6,6 @@ from src.database import get_session
 from src.memory import api
 
 
-@pytest.fixture
-async def client(engine, mem0_store, monkeypatch):
-    from main import app
-    Session = async_sessionmaker(bind=engine, expire_on_commit=False)
-
-    async def _session():
-        async with Session() as s:
-            yield s
-    app.dependency_overrides[get_session] = _session
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
 async def test_remember_recall_roundtrip(client):
     r = await client.post("/api/memory/remember", json={"text": "I applied to Acme today", "agent": "test"})
     assert r.status_code == 202 and r.json()["job_id"] > 0 and r.json()["queued"] is True

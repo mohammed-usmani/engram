@@ -93,11 +93,9 @@ async def _entity(session: AsyncSession, e: Entity) -> int:
 
 
 async def _profile(session: AsyncSession) -> None:
-    rows = await facts.all_facts(kinds=["fact", "preference"])
-    rows.sort(key=lambda f: (int(f["metadata"].get("importance", 3)), f.get("updated_at") or ""), reverse=True)
-    if not rows:
+    content = await facts.profile(PROFILE_FACTS)
+    if not content:
         return
-    content = "\n".join(f"- {f['memory']}" for f in rows[:PROFILE_FACTS])
     block = await session.get(MemoryBlock, "profile")
     if block:
         block.content = content

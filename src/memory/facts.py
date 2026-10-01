@@ -130,3 +130,11 @@ async def similar(text: str, top_k: int = 5) -> list[dict]:
     out = [{"id": r.id, "memory": r.payload.get("data", ""), "score": r.score, "metadata": r.payload}
            for r in rows if not r.payload.get("superseded_by")]
     return out[:top_k]
+
+
+async def profile(limit: int = 15) -> str:
+    """The user's most important current facts and preferences. Built live, so a forgotten or
+    superseded fact disappears from every brief immediately."""
+    rows = await all_facts(kinds=["fact", "preference"])
+    rows.sort(key=lambda f: (int(f["metadata"].get("importance", 3)), f.get("updated_at") or ""), reverse=True)
+    return "\n".join(f"- {f['memory']}" for f in rows[:limit])

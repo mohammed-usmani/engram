@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Context{% endblock %}</title>
+  <title>{% block title %}Engram{% endblock %}</title>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
     :root {
@@ -171,11 +171,11 @@
 </head>
 <body>
   <header>
-    <a href="/chat" class="logo">Context</a>
+    <a href="/memory" class="logo">Engram</a>
     <nav>
       <a href="/chat" {% if active_page == 'chat' %}class="active"{% endif %}>Chat</a>
       <a href="/api/admin" {% if active_page == 'documents' %}class="active"{% endif %}>Documents</a>
-      <a href="/memories" {% if active_page == 'memories' %}class="active"{% endif %}>Memories</a>
+      <a href="/memory" {% if active_page == 'memory' %}class="active"{% endif %}>Memory</a>
       <a href="/settings" {% if active_page == 'settings' %}class="active"{% endif %}>Settings</a>
     </nav>
   </header>

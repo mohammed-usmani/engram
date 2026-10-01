@@ -233,8 +233,13 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
 
     # pinned: profile, session state, per-entity digest + aggregates
     pinned: list[str] = []
-    prof = await session.get(MemoryBlock, "profile")
-    pinned.append("## You\n" + (prof.content if prof else "(no profile yet — memory is still learning about you)"))
+    try:
+        live = await facts.profile()
+    except Exception as e:  # fact store down: fall back to the last snapshot from the sleep pass
+        log.warning("live profile unavailable: %s", e)
+        live = ""
+    prof = None if live else await session.get(MemoryBlock, "profile")
+    pinned.append("## You\n" + (live or (prof.content if prof else "(no profile yet — memory is still learning about you)")))
     if session_id:
         notes = (await session.execute(select(SessionState).where(
             SessionState.session_id == session_id, SessionState.expires_at > now))).scalars().all()

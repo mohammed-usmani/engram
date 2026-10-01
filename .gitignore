@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.env
+
+# Virtual environments
+.venv
+
+# local tooling / editor state
+.idea/
+.claude/
+.remember/
+.superpowers/
+.code-review-graph/
+.DS_Store
+
+# personal data never belongs in this repo — keep it in a private data repo (see README › Backups)
+data/contexts/
+*.tar.age
+*.bundle

@@ -1,0 +1,15 @@
+Type: Skill
+
+Skill Name: PostgreSQL
+
+Category: Database
+
+Level: Advanced
+
+Summary:
+Schema design, query tuning, PostGIS and pgvector.
+
+Key Concepts:
+- Indexing strategies (B-tree, GIN, HNSW)
+- EXPLAIN ANALYZE
+- Migrations without downtime

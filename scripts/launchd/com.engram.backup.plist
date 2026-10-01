@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly encrypted Engram backup (scripts/backup.sh) at 02:30. Installed by scripts/launchd/install.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.engram.backup</string>
+  <key>ProgramArguments</key><array><string>__REPO__/scripts/backup.sh</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/opt/homebrew/opt/libpq/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/engram-backup.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/engram-backup.log</string>
+</dict>
+</plist>

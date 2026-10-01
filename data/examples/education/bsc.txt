@@ -1,0 +1,12 @@
+Type: Education
+
+Title: B.Sc. in Computer Science
+
+Situation:
+Studied computer science at Example University (2019 – 2023).
+
+Task:
+Build strong fundamentals in algorithms, databases and distributed systems.
+
+Action:
+- Final-year project: a geospatial route planner (became TrailMap).

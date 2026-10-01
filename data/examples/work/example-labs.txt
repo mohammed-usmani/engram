@@ -1,0 +1,19 @@
+Type: Experience
+
+Title: Backend Engineer (Example Labs)
+
+Duration:
+2024 – Present
+
+Situation:
+Example Labs needed a billing API that could scale with a growing customer base.
+
+Task:
+Design and own the billing service end to end.
+
+Action:
+- Built the service with FastAPI and PostgreSQL.
+- Added Redis caching for the hottest read paths.
+
+Result:
+- Serves 2M requests/day; p95 latency down 40%.

@@ -1,0 +1,235 @@
+<p align="center">
+  <img src="docs/logo.svg" width="112" alt="Engram logo">
+</p>
+
+<h1 align="center">Engram</h1>
+
+<p align="center">
+  <b>One memory for all your AI assistants.</b><br>
+  Claude Code, ChatGPT, Gemini, Cursor — they all write to it and recall from it, over MCP or REST.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7C3AED"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-4338CA">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-streamable%20HTTP-4338CA">
+  <img alt="Postgres + pgvector" src="https://img.shields.io/badge/Postgres-pgvector-4338CA">
+</p>
+
+---
+
+Every assistant starts from zero. Tell Claude you're job hunting, and ChatGPT still doesn't know.
+Ask any of them *"how is my job search going?"* and the best a vector store can do is return the five
+sentences that look most similar — it can't tell you that you've applied **14 times in 16 days**,
+that **3 became interviews**, or that **system design came up weak in both onsites**.
+
+**Engram** is a single, self-hosted memory service that every assistant shares. Agents call
+`remember` when something happens and `recall(situation)` before they act. Engram turns free text
+into typed memories in the background and answers with one ranked, token-budgeted brief:
+
+An illustrative brief:
+
+```text
+recall("I'm applying for jobs")
+
+## You
+- Backend/AI engineer, prefers concise answers, targets remote roles
+
+## Current task
+- deadline: CV to Acme by Friday
+
+## Job search so far
+14 events since 2026-09-14 (16d), last 2026-09-30 · applied 10 · interview 3 · rejection 1 · outcomes: rejected 1
+Momentum is good; DSA rounds go well, system design is the recurring weak spot.
+
+## Lessons
+- [r:7] System design was flagged in 2/2 onsite interviews — prep it before the next one
+
+## Relevant history
+- [e:41] 2026-09-29 Acme onsite: system design round went poorly
+- [e:38] 2026-09-24 Beta Labs rejection after recruiter screen
+
+## How you do it
+- [f:2c…] How to apply: 1. cv send <company> → 2. log it → 3. follow up in 7 days
+```
+
+## How it works
+
+Engram uses every kind of memory where it fits, and one retrieval pipeline ranks them together.
+
+| Memory type | Lives in | Example |
+|---|---|---|
+| **Working / context** | the brief `recall()` returns, sized to your token budget | — |
+| **Short-term** | `session_state` — expires after the task | `format: PDF`, `due: Friday` |
+| **Episodic** | `episodes` table → **SQL counts, first/last dates, outcome splits** | "applied 10 · interview 3" |
+| **Semantic** | [mem0](https://github.com/mem0ai/mem0) on pgvector, with supersession | "Prefers FastAPI over NestJS" |
+| **Procedural** | mem0 (`teach`) | "How to deploy: test → build → push → verify" |
+| **User profile** | an always-included block built from your most important facts | — |
+| **Shared** | one store for every agent, each write tagged with the agent | — |
+| **External** | your documents (resume, projects…) with hybrid vector + full-text search | — |
+| **Reflective** | `reflections` with evidence + per-topic digests, built by a background "sleep" pass | "System design is the weak spot" |
+
+Everything is joined by **entities** (`topic:job-search`, `company:acme`, `project:cityfix`):
+mention one in a situation and every layer that touches it comes along.
+
+```mermaid
+flowchart LR
+    A["Any assistant<br/>(MCP / REST / hooks)"] -- remember --> Q[(ingest queue)]
+    Q --> X["extract<br/>1 LLM call → typed JSON"]
+    X --> R["resolve entities<br/>split · dedupe · redact"]
+    R --> E[(episodes)]
+    R --> F[(mem0 facts &<br/>procedures)]
+    R --> S[(session state)]
+    F --> C{"reconcile<br/>duplicate / supersedes"}
+    E & F --> Z["consolidate (sleep pass)<br/>digests · reflections · profile"]
+    A -- "recall(situation)" --> P["plan<br/>entities · weights"]
+    P --> CH["channels: profile · session · aggregates ·<br/>episodes · facts · procedures · lessons · docs"]
+    CH --> K["rank: RRF × importance × recency × confidence"]
+    K --> B["token-budgeted brief"] --> A
+```
+
+**Write path.** `remember` returns immediately; a worker extracts entities, events, facts,
+procedures and session notes in **one LLM call**, resolves dates in your timezone, redacts secrets,
+splits multi-company career events so counts stay right, de-duplicates events that were mentioned
+twice, and reconciles new facts against old ones (a changed preference *supersedes* the old one —
+hidden from recall, kept in history).
+
+**Read path.** `recall` matches entities (aliases, embeddings, one hop of co-occurrence), runs
+the channels, fuses them with reciprocal-rank fusion, applies importance, recency half-lives and
+confidence, and packs a sectioned brief under your token budget. `fast=true` uses no LLM at all,
+and recall keeps working (profile, counts, full-text) even if the embedding model is down.
+
+**Sleep pass.** Every 6 hours (and after sessions end) Engram rebuilds topic digests, derives
+lessons from ≥2 related events (with the events as evidence), refreshes your profile and expires
+old session notes. Nothing is deleted.
+
+Full design: [`docs/design.md`](docs/design.md).
+
+## Quick start
+
+Requirements: Python 3.11+ with [uv](https://docs.astral.sh/uv/), Postgres 16 with
+[pgvector](https://github.com/pgvector/pgvector), and [Ollama](https://ollama.com) for local embeddings.
+
+```bash
+git clone https://github.com/mohammed-usmani/engram && cd engram
+uv sync
+ollama pull nomic-embed-text            # embeddings run locally and free
+
+cat > .env <<'ENV'
+CONNECTION_STRING=postgresql+asyncpg://postgres:postgres@localhost:5432/engram
+DATA_DIR=data/examples                  # point at your own documents (keep them out of git)
+USER_NAME=Alex                          # how prompts refer to you
+USER_TZ=Asia/Kolkata                    # "yesterday" means *your* yesterday
+TOGETHER_API_KEY=...                    # or GEMINI_/GROQ_/MISTRAL_/OPENAI_/ANTHROPIC_API_KEY
+MEMORY_LLM_CHAIN=together,ollama        # tried in order; local Ollama as the fallback
+MEMORY_MODEL_TOGETHER=deepseek-ai/DeepSeek-V4-Flash-0731
+ENV
+
+uv run alembic upgrade head
+uv run uvicorn main:app --host 127.0.0.1 --port 8001
+```
+
+On macOS, `scripts/launchd/install.sh` installs it as a login service (plus nightly backups).
+Linux: a systemd user unit running the same `uvicorn` command works.
+
+Try it:
+
+```bash
+curl -X POST localhost:8001/api/memory/remember -H 'Content-Type: application/json' \
+  -d '{"text": "Applied to Zomato and Swiggy for SDE-2 roles last Monday", "agent": "curl"}'
+# a few seconds later
+curl -X POST localhost:8001/api/memory/recall -H 'Content-Type: application/json' \
+  -d '{"situation": "how is my job search going?", "fast": true}'
+```
+
+## Connect your assistants
+
+| Assistant | Setup |
+|---|---|
+| **Claude Code** | `claude mcp add --transport http -s user engram http://localhost:8001/mcp` — and for automatic memory add [`scripts/claude_memory_hook.py`](scripts/claude_memory_hook.py) as a `UserPromptSubmit` + `SessionEnd` hook (injects a recall on the first prompt, saves the conversation at the end) |
+| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.engram]` `url = "http://localhost:8001/mcp"` |
+| **Gemini CLI** | `~/.gemini/settings.json` → `{"mcpServers": {"engram": {"httpUrl": "http://localhost:8001/mcp"}}}` |
+| **Cursor / Windsurf / VS Code** | `{"mcpServers": {"engram": {"url": "http://localhost:8001/mcp"}}}` |
+| **Claude Desktop** | `{"mcpServers": {"engram": {"command": "npx", "args": ["mcp-remote", "http://localhost:8001/mcp"]}}}` |
+| **claude.ai / ChatGPT** | set `ADMIN_TOKEN`, expose with `cloudflared tunnel --url http://localhost:8001`, add `https://<tunnel>/mcp` as a custom connector with the bearer token |
+| **Anything else** | REST under `/api/memory/*`, OpenAPI at `/openapi.json` |
+
+For assistants without hooks, add one custom instruction: *"Before answering anything personal or
+starting a task, call `recall` with my words. When I share a fact, preference, decision or outcome,
+call `remember`."*
+
+**Tools:** `recall` · `remember` · `note` · `teach` · `expand` · `timeline` · `forget`
+
+## Choosing the extraction model
+
+Every memory write costs one LLM call (plus a small one when a new fact may contradict an old one).
+Any OpenAI-compatible provider works: Together, Groq, Mistral, Gemini, Cerebras, OpenAI, Anthropic,
+or local Ollama. Pick one with the included eval — 14 labelled cases (multi-company applications,
+relative dates, interview + offer in one sentence, procedures, session notes, noisy coding
+transcripts, small talk that must be ignored), repeated to catch flakiness:
+
+```bash
+uv run python scripts/eval_extraction.py --chain together --together-model <model> --repeats 5
+uv run python scripts/eval_extraction.py --chain ollama --ollama-model qwen2.5-coder:7b --concurrency 1
+```
+
+Results at the time of writing:
+
+| Model | Score | Median latency | Est. cost / month* |
+|---|---|---|---|
+| `deepseek-ai/DeepSeek-V4-Flash-0731` (Together) | 96%, before the multi-company split fix that targets its only miss | 21 s | ≈ $1.30 |
+| `qwen2.5-coder:7b` (local Ollama, M4 16 GB) | 92% | 20 s | free |
+| `qwen3:8b` (local Ollama, thinking off) | 83% | 20 s | free |
+
+<sub>*≈ 15 coding sessions, 20 notes and 30 recalls a day. Writes are asynchronous, so latency never blocks your assistant.</sub>
+
+## Your data stays yours
+
+- **Local-first.** One process on `127.0.0.1:8001`; embeddings run on your machine.
+- **Secrets are redacted before anything is stored** — API keys, tokens, private keys, URL
+  credentials, card numbers (Luhn-checked), "my password is …".
+- **Auth.** With `ADMIN_TOKEN` set, every path except `/api/health` requires the bearer token for
+  remote or tunnelled requests; direct local use keeps working.
+- **Encrypted backups.** `scripts/backup.sh` dumps Postgres + your documents + fact history into one
+  [age](https://age-encryption.org)-encrypted archive (nightly via launchd, keeps 14). Point
+  `ENGRAM_BACKUP_DIR` at a **private** git repo and every backup is pushed off-machine.
+  `scripts/restore.sh` rebuilds everything on a new machine and refuses to overwrite a database that
+  already holds memories unless you pass `--force`.
+- **Several devices.** Run Engram on one machine and connect the others over
+  [Tailscale](https://tailscale.com) with `ADMIN_TOKEN` — one memory, no sync conflicts.
+
+## API
+
+| | |
+|---|---|
+| `POST /api/memory/remember` | `{text, agent?, session_id?, occurred_at?}` → queued job |
+| `POST /api/memory/recall` | `{situation, budget_tokens?, session_id?, fast?}` → `{brief, items, plan}` |
+| `POST /api/memory/note` | short-term note for a session |
+| `POST /api/memory/teach` | save a procedure |
+| `GET /api/memory/item/{id}` · `DELETE …` | expand / forget an item (`e:`, `f:`, `r:`, `d:` ids) |
+| `GET /api/memory/timeline/{entity}` | chronological events for `topic:job-search`, `company:acme`, … |
+| `GET /api/memory/jobs` · `POST …/jobs/{id}/retry` | extraction queue status / retry |
+| `POST /api/memory/consolidate` | run the sleep pass soon |
+
+Engram also ships a small admin UI (`/admin`), a document store with hybrid search, and a RAG chat
+(`/chat`) over your documents.
+
+## Development
+
+```bash
+createdb engram_test   # TEST_DATABASE_URL defaults to <CONNECTION_STRING db>_test
+uv run pytest
+```
+
+```
+src/memory/      models · llm (provider chain) · facts (mem0) · entities · extract · ingest
+                 recall · consolidate · worker · api · backfill
+src/mcp_server.py  MCP tools (also served at /mcp by main.py)
+scripts/         claude_memory_hook.py · eval_extraction.py · backup.sh · restore.sh · launchd/
+data/examples/   fictional sample documents
+docs/design.md   design notes
+```
+
+## License
+
+[MIT](LICENSE) © 2026 Mohammed Usmani

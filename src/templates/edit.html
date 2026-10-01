@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ "New document" if is_new else doc.title }} — Context{% endblock %}
+
+{% block extra_css %}
+  .edit-header {
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .edit-header h1 { margin-bottom: 0; }
+  .edit-form {
+    max-width: 780px;
+  }
+  .edit-form label {
+    margin-top: 1.2rem;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .edit-form input[readonly] {
+    background: var(--bg-alt);
+    color: var(--text-muted);
+  }
+  .edit-form textarea {
+    min-height: 240px;
+  }
+  .form-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .back-link {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    margin-right: auto;
+  }
+  .back-link:hover { color: var(--text); }
+{% endblock %}
+
+{% block body %}
+<div class="edit-header">
+  <h1>{{ "New document" if is_new else doc.title }}</h1>
+  <a href="/api/admin" class="back-link">← Back to documents</a>
+</div>
+
+{% if not is_new and doc.source.value == "file" %}
+  <div class="banner">
+    This document's source is <code>file</code>. Reseeding from disk will overwrite it — edit the source file at <code>data/contexts/</code> instead unless you want a one-shot override.
+  </div>
+{% endif %}
+
+{% if error %}
+  <div class="banner banner-error">{{ error }}</div>
+{% endif %}
+
+<form method="post"
+  action="{{ '/api/admin/new' if is_new else '/api/admin/' + doc.slug }}"
+  class="edit-form">
+
+  <label>Type
+    <select name="type" required>
+      {% for t in types %}
+        <option value="{{ t }}" {% if not is_new and doc.type.value == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Slug <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(leave blank on create to auto-generate)</span>
+    <input type="text" name="slug"
+      value="{{ '' if is_new else doc.slug }}"
+      {% if not is_new %}readonly{% endif %}
+      placeholder="e.g. project/my-project">
+  </label>
+
+  <label>Title
+    <input type="text" name="title"
+      value="{{ '' if is_new else doc.title }}"
+      required placeholder="Document title">
+  </label>
+
+  <label>Tags <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(comma-separated)</span>
+    <input type="text" name="tags"
+      value="{{ '' if is_new else (doc.tags | join(', ')) }}"
+      placeholder="e.g. python, backend, api">
+  </label>
+
+  <label>Content
+    <textarea name="content" required>{{ '' if is_new else doc.content }}</textarea>
+  </label>
+
+  <label>Sections <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(JSON, optional)</span>
+    <textarea name="sections" style="min-height:80px">{{ '{}' if is_new else (doc.sections | tojson) }}</textarea>
+  </label>
+
+  <label>Metadata <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(JSON, optional)</span>
+    <textarea name="metadata" style="min-height:80px">{{ '{}' if is_new else (doc.doc_metadata | tojson) }}</textarea>
+  </label>
+
+  <div class="form-actions">
+    <button type="submit" class="btn-primary">Save</button>
+    {% if not is_new %}
+      <button type="submit"
+        formaction="/api/admin/{{ doc.slug }}/delete"
+        formmethod="post"
+        class="btn-danger"
+        onclick="return confirm('Delete this document permanently?')">Delete</button>
+    {% endif %}
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,19 @@
+ALEX RIVERA
+Remote · alex@example.com · github.com/example
+
+========================================
+SUMMARY
+========================================
+Backend engineer who builds APIs and data pipelines with Python and PostgreSQL.
+
+========================================
+EXPERIENCE
+========================================
+Backend Engineer, Example Labs (2024 – present)
+• Built the billing API (FastAPI, PostgreSQL) serving 2M requests/day.
+• Cut p95 latency 40% with Redis caching and query tuning.
+
+========================================
+SKILLS
+========================================
+Python, FastAPI, PostgreSQL, Redis, Docker, TypeScript

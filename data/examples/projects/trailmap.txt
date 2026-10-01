@@ -1,0 +1,21 @@
+Type: Project
+Project Name: TrailMap - Offline Hiking Planner
+
+Skill Tags:
+- FastAPI
+- PostgreSQL
+- PostGIS
+- React
+
+========================================
+Project Name: TrailMap - Offline Hiking Planner
+
+Summary:
+A route planner that downloads trail maps for offline use and estimates hiking time from elevation data.
+
+Architecture:
+- FastAPI backend with PostGIS for spatial queries
+- React PWA with service-worker map tile caching
+
+Challenges:
+- Elevation-aware time estimates: implemented Naismith's rule on PostGIS line segments.

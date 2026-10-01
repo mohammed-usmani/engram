@@ -1,0 +1,18 @@
+Type: Skill
+
+Skill Name: Python
+
+Category: Languages
+
+Level: Advanced
+
+Summary:
+Five years building backend services, data pipelines and CLI tools in Python.
+
+Key Concepts:
+- asyncio
+- Type hints and pydantic
+- Packaging with uv
+
+Projects:
+- TrailMap → spatial API

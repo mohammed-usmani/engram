@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Context{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    :root {
+      --bg: #faf8f5;
+      --bg-alt: #f0ede8;
+      --text: #1a1a1a;
+      --text-muted: #888;
+      --accent: #c4a882;
+      --accent-light: #e8ddd0;
+      --border: #ddd;
+      --border-strong: #1a1a1a;
+      --font-heading: Georgia, 'Times New Roman', serif;
+      --font-body: system-ui, -apple-system, sans-serif;
+      --radius: 4px;
+      --max-width: 1100px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 1.2rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid var(--border-strong);
+    }
+    .logo {
+      font-family: var(--font-heading);
+      font-size: 1.4rem;
+      font-weight: 700;
+      font-style: italic;
+      color: var(--text);
+      text-decoration: none;
+    }
+    nav { display: flex; gap: 1.5rem; }
+    nav a {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      text-decoration: none;
+      padding-bottom: 2px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    nav a:hover { color: var(--text); }
+    nav a.active {
+      color: var(--text);
+      border-bottom: 2px solid var(--border-strong);
+    }
+    main {
+      padding: 1.5rem 2rem;
+    }
+    main.contained {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+    h1 {
+      font-family: var(--font-heading);
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+    h2 {
+      font-family: var(--font-heading);
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 0.8rem;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      padding: 0.5rem 0.6rem;
+      border-bottom: 2px solid var(--border-strong);
+      text-align: left;
+    }
+    td {
+      padding: 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    tr:hover { background: var(--bg-alt); }
+    label { display: block; margin-top: 1rem; font-weight: 600; font-size: 0.85rem; }
+    input[type=text], input[type=password], select, textarea {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      font: inherit;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    textarea {
+      min-height: 200px;
+      font-family: ui-monospace, 'Cascadia Code', monospace;
+      font-size: 0.85rem;
+    }
+    button, .btn {
+      padding: 0.5rem 1rem;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--text);
+      transition: background 0.2s;
+    }
+    button:hover, .btn:hover { background: var(--bg-alt); }
+    .btn-primary {
+      background: var(--border-strong);
+      color: var(--bg);
+      border-color: var(--border-strong);
+    }
+    .btn-primary:hover { background: #333; }
+    .btn-danger { color: #c33; border-color: #c33; }
+    .btn-danger:hover { background: #fdd; }
+    .banner {
+      background: var(--bg-alt);
+      border-left: 3px solid var(--accent);
+      padding: 0.6rem 1rem;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+    }
+    .banner-error {
+      background: #fef2f2;
+      border-left-color: #c33;
+    }
+    .tag {
+      display: inline-block;
+      background: var(--bg-alt);
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.85em;
+      background: var(--bg-alt);
+      padding: 0.1rem 0.3rem;
+      border-radius: 2px;
+    }
+    {% block extra_css %}{% endblock %}
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/chat" class="logo">Context</a>
+    <nav>
+      <a href="/chat" {% if active_page == 'chat' %}class="active"{% endif %}>Chat</a>
+      <a href="/api/admin" {% if active_page == 'documents' %}class="active"{% endif %}>Documents</a>
+      <a href="/memories" {% if active_page == 'memories' %}class="active"{% endif %}>Memories</a>
+      <a href="/settings" {% if active_page == 'settings' %}class="active"{% endif %}>Settings</a>
+    </nav>
+  </header>
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

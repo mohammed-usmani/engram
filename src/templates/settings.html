@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+{% block title %}Settings — Context{% endblock %}
+
+{% block extra_css %}
+  .settings-header {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-header p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 0.4rem;
+  }
+  .provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.2rem;
+  }
+  .provider-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem;
+    position: relative;
+  }
+  .provider-card.active-card {
+    border-color: var(--accent);
+  }
+  .provider-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.8rem;
+  }
+  .provider-card h2 {
+    font-size: 1rem;
+    margin-bottom: 0;
+    text-transform: capitalize;
+    font-family: var(--font-heading);
+  }
+  .status-badge {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .badge-active {
+    background: #d4edda;
+    color: #155724;
+  }
+  .badge-inactive {
+    background: var(--bg-alt);
+    color: var(--text-muted);
+  }
+  .card-field {
+    margin-top: 0.8rem;
+  }
+  .card-field label {
+    margin-top: 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
+  .card-field input, .card-field select {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.5rem;
+  }
+  .key-row {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .key-row input { flex: 1; }
+  .key-toggle {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.6rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+    cursor: pointer;
+    color: var(--text-muted);
+  }
+  .key-toggle:hover { background: var(--bg-alt); }
+  .card-actions {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .card-actions button {
+    font-size: 0.82rem;
+    padding: 0.4rem 0.9rem;
+  }
+  .save-status {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .save-status.ok { color: #155724; }
+  .save-status.err { color: #c33; }
+  #loading-state {
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 2rem 0;
+  }
+{% endblock %}
+
+{% block body %}
+<div class="settings-header">
+  <h1>Settings</h1>
+  <p>Configure LLM providers. Add API keys to activate cloud providers.</p>
+</div>
+
+<div id="loading-state">Loading providers…</div>
+<div class="provider-grid" id="provider-grid" style="display:none"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PROVIDER_LABELS = {
+  ollama: 'Ollama (local)',
+  groq: 'Groq',
+  cerebras: 'Cerebras',
+  openai: 'OpenAI',
+  gemini: 'Google Gemini',
+  claude: 'Anthropic Claude',
+};
+
+let providerModels = {};
+
+async function loadSettings() {
+  try {
+    const [provRes] = await Promise.all([
+      fetch('/api/settings/providers'),
+    ]);
+    const providers = await provRes.json();
+
+    // Fetch models for each provider in parallel
+    await Promise.all(providers.map(async (prov) => {
+      try {
+        const mr = await fetch(`/api/settings/providers/${prov.provider}/models`);
+        if (mr.ok) {
+          const md = await mr.json();
+          providerModels[prov.provider] = md.models || [];
+        }
+      } catch (_) {
+        providerModels[prov.provider] = [];
+      }
+    }));
+
+    renderCards(providers);
+  } catch (e) {
+    document.getElementById('loading-state').textContent = 'Failed to load providers: ' + e.message;
+  }
+}
+
+function renderCards(providers) {
+  document.getElementById('loading-state').style.display = 'none';
+  const grid = document.getElementById('provider-grid');
+  grid.style.display = 'grid';
+  grid.innerHTML = providers.map(p => buildCard(p)).join('');
+}
+
+function buildCard(prov) {
+  const label = PROVIDER_LABELS[prov.provider] || prov.provider;
+  const models = providerModels[prov.provider] || [];
+  const isOllama = prov.provider === 'ollama';
+  const badgeClass = prov.is_active ? 'badge-active' : 'badge-inactive';
+  const badgeText = prov.is_active ? 'Active' : 'Inactive';
+  const cardClass = prov.is_active ? 'provider-card active-card' : 'provider-card';
+
+  // API key section (not for ollama)
+  const keySection = isOllama ? '' : `
+    <div class="card-field">
+      <label>API Key</label>
+      <div class="key-row">
+        <input type="password" id="key-${prov.provider}"
+          placeholder="${prov.api_key_set ? '●●●●●●●● (set)' : 'Enter API key…'}"
+          autocomplete="new-password">
+        <button class="key-toggle" onclick="toggleKey('${prov.provider}')">Show</button>
+      </div>
+    </div>`;
+
+  // Model dropdown or input
+  const modelSection = models.length > 0 ? `
+    <div class="card-field">
+      <label>Model</label>
+      <select id="model-${prov.provider}">
+        ${models.map(m => `<option value="${escapeAttr(m)}" ${m === prov.model ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+      </select>
+    </div>` : `
+    <div class="card-field">
+      <label>Model</label>
+      <input type="text" id="model-${prov.provider}"
+        value="${escapeAttr(prov.model || '')}"
+        placeholder="e.g. mistral:latest">
+    </div>`;
+
+  // Base URL (ollama + openai-compat providers)
+  const urlSection = (isOllama || prov.base_url) ? `
+    <div class="card-field">
+      <label>Base URL</label>
+      <input type="text" id="url-${prov.provider}"
+        value="${escapeAttr(prov.base_url || '')}"
+        placeholder="http://localhost:11434">
+    </div>` : '';
+
+  // Active toggle
+  const activeToggle = !isOllama ? `
+    <div class="card-field" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.8rem;">
+      <input type="checkbox" id="active-${prov.provider}" ${prov.is_active ? 'checked' : ''}
+        style="width:auto">
+      <label for="active-${prov.provider}" style="margin-top:0;font-size:0.82rem;">Enabled</label>
+    </div>` : '';
+
+  return `<div class="${cardClass}" id="card-${prov.provider}">
+    <div class="provider-card-header">
+      <h2>${escapeHtml(label)}</h2>
+      <span class="status-badge ${badgeClass}" id="badge-${prov.provider}">${badgeText}</span>
+    </div>
+    ${keySection}
+    ${modelSection}
+    ${urlSection}
+    ${activeToggle}
+    <div class="card-actions">
+      <button class="btn-primary" onclick="saveProvider('${prov.provider}')">Save</button>
+      <span class="save-status" id="status-${prov.provider}"></span>
+    </div>
+  </div>`;
+}
+
+function toggleKey(name) {
+  const input = document.getElementById(`key-${name}`);
+  const btn = input.nextElementSibling;
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = 'Hide';
+  } else {
+    input.type = 'password';
+    btn.textContent = 'Show';
+  }
+}
+
+async function saveProvider(name) {
+  const statusEl = document.getElementById(`status-${name}`);
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'save-status';
+
+  const payload = {};
+
+  // API key (if field exists and has a value)
+  const keyEl = document.getElementById(`key-${name}`);
+  if (keyEl && keyEl.value.trim()) {
+    payload.api_key = keyEl.value.trim();
+  }
+
+  // Model
+  const modelEl = document.getElementById(`model-${name}`);
+  if (modelEl) {
+    payload.model = modelEl.tagName === 'SELECT'
+      ? modelEl.options[modelEl.selectedIndex].value
+      : modelEl.value.trim() || null;
+  }
+
+  // Base URL
+  const urlEl = document.getElementById(`url-${name}`);
+  if (urlEl && urlEl.value.trim()) {
+    payload.base_url = urlEl.value.trim();
+  }
+
+  // Active toggle
+  const activeEl = document.getElementById(`active-${name}`);
+  if (activeEl) {
+    payload.is_active = activeEl.checked;
+  }
+
+  try {
+    const r = await fetch(`/api/settings/providers/${name}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Request failed');
+
+    // Update UI state
+    const badge = document.getElementById(`badge-${name}`);
+    const card = document.getElementById(`card-${name}`);
+    if (data.is_active) {
+      badge.textContent = 'Active';
+      badge.className = 'status-badge badge-active';
+      card.className = 'provider-card active-card';
+    } else {
+      badge.textContent = 'Inactive';
+      badge.className = 'status-badge badge-inactive';
+      card.className = 'provider-card';
+    }
+
+    statusEl.textContent = 'Saved';
+    statusEl.className = 'save-status ok';
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+
+    // Clear key field after save
+    if (keyEl) keyEl.value = '';
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+    statusEl.className = 'save-status err';
+  }
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text || '';
+  return d.innerHTML;
+}
+
+function escapeAttr(text) {
+  return (text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+loadSettings();
+</script>
+{% endblock %}

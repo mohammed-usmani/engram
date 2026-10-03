@@ -14,6 +14,7 @@ from src.database import get_session
 from src.memory import ingest, recall as rc
 from src.memory.models import IngestJob
 from src.memory.worker import request_consolidation
+from src import oauth
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -25,7 +26,7 @@ def bearer_ok(authorization: str | None) -> bool:
 _FORWARDED = (b"x-forwarded-for", b"forwarded", b"x-real-ip", b"cf-connecting-ip", b"true-client-ip",
               b"x-forwarded-host")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
-_OPEN_PATHS = ("/api/health",)
+_OPEN_PATHS = ("/api/health", *oauth.OPEN_PATHS)
 
 
 def needs_token(path: str, headers: dict, client) -> bool:
@@ -34,11 +35,19 @@ def needs_token(path: str, headers: dict, client) -> bool:
     Direct local use = loopback client, localhost Host header (blocks DNS rebinding), and no proxy
     headers — tunnels (cloudflared, ngrok) connect from loopback too but always add forwarding headers.
     """
-    if path in _OPEN_PATHS:
+    if path in _OPEN_PATHS or path.startswith("/.well-known/"):
         return False
     host = headers.get(b"host", b"").decode().rsplit(":", 1)[0] if b"host" in headers else ""
     local = bool(client) and client[0] in ("127.0.0.1", "::1") and host in _LOCAL_HOSTS
     return not local or any(h in headers for h in _FORWARDED)
+
+
+async def _authorized(authorization: str | None) -> bool:
+    """The admin token, or an access token issued to an OAuth client (ChatGPT...)."""
+    if bearer_ok(authorization):
+        return True
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    return bool(token and oauth.provider and await oauth.provider.load_access_token(token))
 
 
 class AuthMiddleware:
@@ -51,8 +60,11 @@ class AuthMiddleware:
         if scope["type"] == "http" and settings.admin_token:
             headers = dict(scope.get("headers") or [])
             if needs_token(scope["path"], headers, scope.get("client")) and \
-                    not bearer_ok(headers.get(b"authorization", b"").decode() or None):
-                return await PlainTextResponse("Unauthorized\n", status_code=401)(scope, receive, send)
+                    not await _authorized(headers.get(b"authorization", b"").decode() or None):
+                # Tells OAuth clients where to discover how to sign in.
+                meta = oauth.resource_metadata_url()
+                extra = {"WWW-Authenticate": f'Bearer resource_metadata="{meta}"'} if meta else None
+                return await PlainTextResponse("Unauthorized\n", status_code=401, headers=extra)(scope, receive, send)
         await self.app(scope, receive, send)
 
 

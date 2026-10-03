@@ -24,7 +24,8 @@ mcp = FastMCP(
     instructions=(
         "Engram is the user's personal memory. Call recall() first for anything personal. "
         "Facts and events: remember(). Documents (resume, projects, experience, skills, "
-        "education, achievements, certifications) are the source of truth for their career: "
+        "education, achievements, certifications, and profile/* with the exact current text of "
+        "each public profile) are the source of truth for their career: "
         "read with list_documents/get_document, change with edit_document (small edits) or "
         "save_document (create or replace), remove with delete_document."
     ),
@@ -63,7 +64,8 @@ async def _with_session(fn):
 @mcp.tool()
 async def list_document_types() -> list[str]:
     """List the document types stored about the user: resume, project (detailed
-    write-ups), skill, experience, education, achievement, certification. Call list_documents
+    write-ups), skill, experience, education, achievement, certification, profile (the exact
+    current text of each public profile: LinkedIn, Indeed, GitHub, Hashnode...). Call list_documents
     with a type filter to see titles, then get_document(slug) for full content."""
     return [t.value for t in DocType]
 

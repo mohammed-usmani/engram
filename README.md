@@ -151,8 +151,12 @@ curl -X POST localhost:8001/api/memory/recall -H 'Content-Type: application/json
 | **Gemini CLI** | `~/.gemini/settings.json` → `{"mcpServers": {"engram": {"httpUrl": "http://localhost:8001/mcp"}}}` |
 | **Cursor / Windsurf / VS Code** | `{"mcpServers": {"engram": {"url": "http://localhost:8001/mcp"}}}` |
 | **Claude Desktop** | `{"mcpServers": {"engram": {"command": "npx", "args": ["mcp-remote", "http://localhost:8001/mcp"]}}}` |
-| **claude.ai / ChatGPT** | set `ADMIN_TOKEN`, expose with `cloudflared tunnel --url http://localhost:8001`, add `https://<tunnel>/mcp` as a custom connector with the bearer token |
+| **claude.ai** | set `ADMIN_TOKEN`, expose port 8001 (e.g. `tailscale funnel --bg 8001`), add `https://<public-url>/mcp` as a custom connector with request header `Authorization: Bearer <token>` |
+| **ChatGPT / other OAuth-only apps** | also set `PUBLIC_URL=https://<public-url>`; add `https://<public-url>/mcp` with **OAuth**, then approve on Engram's consent page by entering `ADMIN_TOKEN` |
 | **Anything else** | REST under `/api/memory/*`, OpenAPI at `/openapi.json` |
+
+Local tools on `http://localhost:8001/mcp` (Claude Code, Codex, Gemini CLI, Antigravity, Cursor) need no token
+or sign-in; the token and OAuth only apply to requests that arrive through a tunnel.
 
 For assistants without hooks, add one custom instruction: *"Before answering anything personal or
 starting a task, call `recall` with my words. When I share a fact, preference, decision or outcome,

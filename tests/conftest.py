@@ -104,3 +104,11 @@ async def client(engine, mem0_store, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_local_auth(monkeypatch):
+    """Tests don't inherit the machine's ADMIN_TOKEN / PUBLIC_URL from .env."""
+    from src.config import settings
+    monkeypatch.setattr(settings, "admin_token", None)
+    monkeypatch.setattr(settings, "public_url", None)

@@ -20,6 +20,7 @@ class DocType(str, enum.Enum):
     EDUCATION = "education"
     ACHIEVEMENT = "achievement"
     CERTIFICATION = "certification"
+    PROFILE = "profile"  # what a public profile (LinkedIn, Indeed, GitHub...) currently says
 
 
 class Source(str, enum.Enum):

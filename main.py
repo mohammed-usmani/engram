@@ -20,6 +20,7 @@ from src.memory.api import AuthMiddleware, router as memory_router
 from src.memory.dashboard import router as dashboard_router
 from src.memory.worker import run_worker
 from src.mcp_server import mcp
+from src import oauth
 
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ async def health() -> dict[str, str]:
 async def types() -> list[str]:
     return [t.value for t in DocType]
 
+
+# OAuth for MCP clients without a fixed header (only when PUBLIC_URL is set); before the mount.
+app.router.routes.extend(oauth.routes)
 
 # MCP (streamable HTTP) at /mcp — mounted last so every FastAPI route above wins.
 app.mount("/", mcp.streamable_http_app())

@@ -158,12 +158,15 @@ For assistants without hooks, add one custom instruction: *"Before answering any
 starting a task, call `recall` with my words. When I share a fact, preference, decision or outcome,
 call `remember`."*
 
-**Tools:** `recall` · `remember` · `note` · `teach` · `expand` · `timeline` · `forget`
+**Tools:** `recall` · `remember` · `note` · `teach` · `expand` · `timeline` · `forget`, and for
+documents `list_documents` · `get_document` · `search_context` · `edit_document` · `save_document` ·
+`delete_document`
 
 ## Your documents
 
 Resume, projects, skills, experience and education live in the database and are edited in the
-browser at **http://localhost:8001/admin** — no files, no reseeding. Write plain text: `Key: value`
+browser at **http://localhost:8001/admin**, or by any assistant over MCP (`edit_document` for a
+small change, `save_document` to create or replace) — no files, no reseeding. Write plain text: `Key: value`
 lines at the top become fields, a line like `Summary:` starts a section; both are re-derived and the
 document is re-embedded on every save, so recall sees the change immediately. Documents appear in
 briefs under *Documents* (e.g. `[d:resume/master_resume]`).

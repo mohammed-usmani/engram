@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.database import AsyncSessionLocal
-from src.models import ContextDocument, DocType, ChatSession, ChatMessage
+from src.models import ContextDocument, DocType, Source, ChatSession, ChatMessage
 from src.services.chat import handle_chat
 from src.services.memory import list_memories as _list_memories, delete_memory as _delete_memory
 
@@ -21,6 +21,13 @@ from src.memory.recall import recall as _recall
 log = logging.getLogger(__name__)
 mcp = FastMCP(
     "engram",
+    instructions=(
+        "Engram is the user's personal memory. Call recall() first for anything personal. "
+        "Facts and events: remember(). Documents (resume, projects, experience, skills, "
+        "education, achievements, certifications) are the source of truth for their career: "
+        "read with list_documents/get_document, change with edit_document (small edits) or "
+        "save_document (create or replace), remove with delete_document."
+    ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
@@ -55,9 +62,8 @@ async def _with_session(fn):
 
 @mcp.tool()
 async def list_document_types() -> list[str]:
-    """List the document types stored about the user. Types include: resume,
-    project (detailed project write-ups), skill (per-skill documents),
-    experience (work experiences), education. Call list_documents
+    """List the document types stored about the user: resume, project (detailed
+    write-ups), skill, experience, education, achievement, certification. Call list_documents
     with a type filter to see titles, then get_document(slug) for full content."""
     return [t.value for t in DocType]
 
@@ -109,10 +115,82 @@ async def get_document(slug: str) -> dict:
     return await _with_session(inner)
 
 
+async def _save(session: AsyncSession, doc: ContextDocument) -> dict:
+    # Same path as an edit in /admin: sections and metadata re-derived, re-embedded.
+    from src.routers.admin import _refresh_derived
+    doc.source = Source.MANUAL
+    await _refresh_derived(doc)
+    await session.commit()
+    return _doc_summary(doc)
+
+
+@mcp.tool()
+async def save_document(slug: str, content: str | None = None, title: str | None = None,
+                        type: str | None = None, tags: list[str] | None = None) -> dict:
+    """Create or fully replace a document about the user (resume, project, experience...).
+
+    `content` is plain text and replaces the whole document: `Key: value` lines at the top
+    become metadata, a line like `Summary:` starts a section. Call get_document first and
+    send back the full edited text. For a small change prefer edit_document. To only
+    rename or retag an existing document, omit `content`.
+
+    New document: slug is '<type>/<name>' (e.g. 'project/voiceagent'); title is required,
+    type defaults to the slug's prefix. Existing document: title, type and tags are kept
+    unless you pass them. Types: see list_document_types."""
+    async def inner(session: AsyncSession):
+        doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+        if doc is None:
+            if not title or content is None:
+                return {"error": "title and content are required for a new document"}
+            doc = ContextDocument(slug=slug, title=title, type=DocType(type or slug.split("/")[0]),
+                                  tags=[], content="", sections={}, doc_metadata={})
+            session.add(doc)
+        if title:
+            doc.title = title
+        if type:
+            doc.type = DocType(type)
+        if tags is not None:
+            doc.tags = [t.strip().lower() for t in tags if t.strip()]
+        if content is not None:
+            doc.content = content
+        return await _save(session, doc)
+    return await _with_session(inner)
+
+
+@mcp.tool()
+async def edit_document(slug: str, old_text: str, new_text: str) -> dict:
+    """Change part of a document: replaces `old_text` with `new_text` in its content.
+    `old_text` must appear exactly once (copy it from get_document, including line
+    breaks); otherwise nothing changes and an error says why. Use '' as new_text to delete."""
+    async def inner(session: AsyncSession):
+        doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+        if doc is None:
+            return {"error": f"document not found: {slug}"}
+        count = doc.content.count(old_text) if old_text else 0
+        if count != 1:
+            return {"error": f"old_text found {count} times in {slug}; it must match exactly once"}
+        doc.content = doc.content.replace(old_text, new_text)
+        return await _save(session, doc)
+    return await _with_session(inner)
+
+
+@mcp.tool()
+async def delete_document(slug: str) -> dict:
+    """Permanently delete a document. Only when the user asks, or it is wrong/duplicated."""
+    async def inner(session: AsyncSession):
+        doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+        if doc is None:
+            return {"error": f"document not found: {slug}"}
+        await session.delete(doc)
+        await session.commit()
+        return {"deleted": slug}
+    return await _with_session(inner)
+
+
 @mcp.tool()
 async def search_context(query: str, limit: int = 10) -> list[dict] | dict:
-    """Full-text search across all 46 documents (resume, projects, skills, experiences,
-    education). Returns ranked slim hits with snippets. Use this to find relevant
+    """Full-text search across all documents (resume, projects, skills, experiences,
+    education, achievements, certifications). Returns ranked slim hits with snippets. Use this to find relevant
     documents by keyword (tech names, project names, concepts), then call
     get_document(slug) to retrieve full content of interesting results.
 

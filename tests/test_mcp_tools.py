@@ -80,3 +80,32 @@ async def test_find_relevant_context(mcp_db):
     assert out["resume"] is not None
     slugs = {e["slug"] for e in out["experiences"]}
     assert "experience/freelance" in slugs
+
+
+async def test_save_edit_delete_document(mcp_db, monkeypatch):
+    import src.routers.admin as admin
+    from src.mcp_server import save_document, edit_document, delete_document, get_document
+
+    async def fake_embed(text):
+        return [0.25] * 768
+    monkeypatch.setattr(admin, "embed", fake_embed)
+
+    out = await _call(save_document)("project/voiceagent", "Stack: Python\n\nSummary:\nPhone agent.",
+                                     title="voiceAgent", tags=["Voice"])
+    assert out == {"slug": "project/voiceagent", "title": "voiceAgent", "type": "project", "tags": ["voice"]}
+    doc = await _call(get_document)("project/voiceagent")
+    assert doc["metadata"]["Stack"] == "Python" and doc["sections"]["Summary"] == "Phone agent."
+
+    assert "error" in await _call(save_document)("project/new", "x")  # new doc needs a title
+    assert "error" in await _call(edit_document)("project/voiceagent", "nowhere", "y")
+
+    await _call(edit_document)("project/voiceagent", "Phone agent.", "Outbound phone agent.")
+    doc = await _call(get_document)("project/voiceagent")
+    assert doc["sections"]["Summary"] == "Outbound phone agent." and doc["title"] == "voiceAgent"
+
+    await _call(save_document)("project/voiceagent", title="voiceAgent v2")  # rename only
+    doc = await _call(get_document)("project/voiceagent")
+    assert doc["title"] == "voiceAgent v2" and doc["sections"]["Summary"] == "Outbound phone agent."
+
+    assert await _call(delete_document)("project/voiceagent") == {"deleted": "project/voiceagent"}
+    assert "error" in await _call(get_document)("project/voiceagent")

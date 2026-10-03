@@ -168,12 +168,19 @@ documents `list_documents` · `get_document` · `search_context` · `edit_docume
 
 ## Your documents
 
-Resume, projects, skills, experience and education live in the database and are edited in the
-browser at **http://localhost:8001/admin**, or by any assistant over MCP (`edit_document` for a
+Resume, projects, skills, experience, education, achievements, certifications and **profiles** live
+in the database and are edited in the browser at **http://localhost:8001/admin**, or by any assistant over MCP (`edit_document` for a
 small change, `save_document` to create or replace) — no files, no reseeding. Write plain text: `Key: value`
 lines at the top become fields, a line like `Summary:` starts a section; both are re-derived and the
 document is re-embedded on every save, so recall sees the change immediately. Documents appear in
 briefs under *Documents* (e.g. `[d:resume/master_resume]`).
+
+A **profile** document (`profile/linkedin`, `profile/indeed`, `profile/github`…) holds the exact text
+a public profile currently shows, so an assistant asked "what does my LinkedIn say?" quotes it instead
+of guessing. Note anything you haven't captured yet in the document itself, so nothing gets invented.
+
+Once `ADMIN_TOKEN` is set, the admin pages ask for it even on your own machine: open
+`http://localhost:8001/api/admin?token=<token>` once and the browser keeps a cookie.
 
 Text files are only an import path: on an empty database Engram imports `DATA_DIR`
 (`data/examples/` ships a fictional sample), and **Import new files** adds files that aren't in the
@@ -224,8 +231,15 @@ Results at the time of writing:
 - **Local-first.** One process on `127.0.0.1:8001`; embeddings run on your machine.
 - **Secrets are redacted before anything is stored** — API keys, tokens, private keys, URL
   credentials, card numbers (Luhn-checked), "my password is …".
-- **Auth.** With `ADMIN_TOKEN` set, every path except `/api/health` requires the bearer token for
-  remote or tunnelled requests; direct local use keeps working.
+- **Auth.** With `ADMIN_TOKEN` set, every path except `/api/health` (and the OAuth endpoints below)
+  requires the bearer token for remote or tunnelled requests; direct local use keeps working.
+- **OAuth for apps that can't send a header** (ChatGPT, Gemini). Set `PUBLIC_URL` to the HTTPS
+  address the app reaches (e.g. your Tailscale Funnel URL) alongside `ADMIN_TOKEN`. Engram then serves
+  MCP OAuth discovery, client registration, `/authorize`, `/token` and `/revoke`. Connecting sends you
+  to `/oauth/consent`, where you approve by typing `ADMIN_TOKEN`, so OAuth never grants more than the
+  token does. Clients and token hashes are kept in `OAUTH_STORE` (default
+  `~/.config/engram/oauth.json`); access tokens last an hour and refresh silently, refresh tokens 180
+  days. Delete that file to sign every app out.
 - **Encrypted backups.** `scripts/backup.sh` dumps Postgres + your documents + fact history into one
   [age](https://age-encryption.org)-encrypted archive (nightly via launchd, keeps 14). Point
   `ENGRAM_BACKUP_DIR` at a **private** git repo and every backup is pushed off-machine.

@@ -69,3 +69,21 @@ def test_offsets_survive_a_failed_post(tmp_path, monkeypatch):
     with sync.offsets() as data:
         sync.sync_file(p, "claude-code", sync.claude_entry, False, data, final=True)
     assert len(sent) == 1  # retried, not lost
+
+
+def test_same_session_under_another_spelling_is_not_resent(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync, "MIN_CHUNK_CHARS", 1)
+    monkeypatch.setattr(sync, "OFFSETS", tmp_path / "offsets.json")
+    sent = []
+    monkeypatch.setattr(sync, "_post", sent.append)
+    (tmp_path / "TechNSure").mkdir()
+    p = tmp_path / "TechNSure" / "abc.jsonl"
+    p.write_text(_claude("hello"))
+    with sync.offsets() as data:
+        sync.sync_file(p, "claude-code", sync.claude_entry, False, data, final=True)
+    other_spelling = tmp_path / "other" / "abc.jsonl"  # how the hook may name the same session
+    other_spelling.parent.mkdir()
+    other_spelling.write_text(_claude("hello"))
+    with sync.offsets() as data:
+        sync.sync_file(other_spelling, "claude-code", sync.claude_entry, False, data, final=True)
+    assert len(sent) == 1

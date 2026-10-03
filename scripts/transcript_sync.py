@@ -82,6 +82,13 @@ SOURCES = [
 
 # -- shared offsets --------------------------------------------------------------------------
 
+def _key(path: Path) -> str:
+    # The file name (a session UUID), not the full path: Claude Code reported one session's
+    # folder as "-dev-technsure" while the folder on disk is "-dev-TechNSure" (same file on a
+    # case-insensitive disk), and the path-keyed offset made the hook resend 60 chunks of history.
+    return path.name
+
+
 @contextmanager
 def offsets():
     OFFSETS.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +98,10 @@ def offsets():
             data = json.loads(OFFSETS.read_text())
         except (OSError, ValueError):
             data = {}
+        merged: dict[str, int] = {}
+        for k, v in data.items():  # older files were keyed by full path, sometimes twice per session
+            merged[Path(k).name] = max(v, merged.get(Path(k).name, 0))
+        data = merged
         yield data
         tmp = OFFSETS.with_suffix(".tmp")
         tmp.write_text(json.dumps(data))
@@ -168,7 +179,7 @@ def _post(body: dict) -> None:
 
 def sync_file(path: Path, agent: str, parser, whole_json: bool, data: dict, final: bool) -> int:
     """Send this transcript's unsaved text; the offset only advances once Engram accepted it."""
-    key = str(path)
+    key = _key(path)
     chunks, done = unsaved_chunks(path, parser, whole_json, data.get(key, 0), final)
     label = path.parent.name if agent == "claude-code" else path.stem
     for i, (text, ts) in enumerate(chunks):
@@ -184,7 +195,7 @@ def run(init: bool = False) -> int:
         for agent, pattern, parser, whole in SOURCES:
             for path in HOME.glob(pattern):
                 if init:
-                    data.setdefault(str(path), end_position(path, whole))
+                    data.setdefault(_key(path), end_position(path, whole))
                     continue
                 idle = time.time() - path.stat().st_mtime > IDLE_FLUSH_S
                 sent += sync_file(path, agent, parser, whole, data, final=idle)

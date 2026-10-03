@@ -1,10 +1,11 @@
 import asyncio
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -90,6 +91,34 @@ async def settings_page(request: Request):
 @app.get("/admin", include_in_schema=False)
 async def admin_shortcut():
     return RedirectResponse("/api/admin")
+
+
+def _safe_next(nxt: str) -> str:
+    return nxt if nxt.startswith("/") and not nxt.startswith("//") else "/admin"
+
+
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_page(request: Request, next: str = "/admin"):
+    return _templates.TemplateResponse("login.html", {"request": request, "next": _safe_next(next), "error": None})
+
+
+@app.post("/login", include_in_schema=False)
+async def login(request: Request, admin_token: str = Form(...), next: str = Form("/admin")):
+    if not app_settings.admin_token or not hmac.compare_digest(admin_token.strip(), app_settings.admin_token):
+        return _templates.TemplateResponse("login.html", {"request": request, "next": _safe_next(next),
+                                                          "error": "Wrong token."}, status_code=401)
+    resp = RedirectResponse(_safe_next(next), status_code=303)
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    resp.set_cookie("admin_token", app_settings.admin_token, max_age=30 * 24 * 3600,
+                    httponly=True, secure=secure, samesite="lax")
+    return resp
+
+
+@app.get("/logout", include_in_schema=False)
+async def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie("admin_token")
+    return resp
 
 
 @app.get("/api/health")

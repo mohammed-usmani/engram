@@ -2,7 +2,11 @@
 """Claude Code hook → personal memory API. Stdlib only; never blocks or fails the session.
 
 UserPromptSubmit: on the FIRST prompt of a session, inject recall(prompt + project) as context.
-SessionEnd:       send the conversation's user/assistant text to /api/memory/ingest.
+PreCompact:       save everything not yet saved (the context is about to be summarised away).
+SessionEnd:       save the rest.
+
+While a session runs, transcript_sync.py (launchd, every 10 minutes) saves it chunk by chunk;
+both share one offset file, so nothing is sent twice.
 
 Env: MEMORY_API (default http://127.0.0.1:8001), ADMIN_TOKEN (optional bearer).
 """
@@ -15,9 +19,10 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+import transcript_sync  # noqa: E402
+
 API = os.environ.get("MEMORY_API", "http://127.0.0.1:8001").rstrip("/")
-MAX_TRANSCRIPT_CHARS = 24_000
-MIN_TRANSCRIPT_CHARS = 400  # skip trivial sessions
 
 
 def _post(path: str, body: dict, timeout: float) -> dict:
@@ -29,30 +34,12 @@ def _post(path: str, body: dict, timeout: float) -> dict:
         return json.loads(r.read() or b"{}")
 
 
-def _text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
-    return ""
-
-
-def transcript_text(path: str) -> str:
-    """User/assistant prose only (no tool calls/results, no injected system reminders), newest kept."""
-    lines = []
-    for raw in Path(path).read_text(errors="ignore").splitlines():
-        try:
-            entry = json.loads(raw)
-        except ValueError:
-            continue
-        if entry.get("type") not in ("user", "assistant") or entry.get("isMeta"):
-            continue
-        msg = entry.get("message") or {}
-        text = _text(msg.get("content")).strip()
-        if not text or text.startswith(("<system-reminder>", "<command-", "<local-command", "Caveat:")):
-            continue
-        lines.append(f"{msg.get('role', entry['type'])}: {text}")
-    return "\n".join(lines)[-MAX_TRANSCRIPT_CHARS:]
+def save(event: dict) -> None:
+    """Flush this session's unsaved conversation (same offsets as transcript_sync, so no repeats)."""
+    path = Path(event.get("transcript_path") or "")
+    if path.is_file():
+        with transcript_sync.offsets() as data:
+            transcript_sync.sync_file(path, "claude-code", transcript_sync.claude_entry, False, data, final=True)
 
 
 def _first_prompt(session_id: str) -> bool:
@@ -77,11 +64,8 @@ def main() -> None:
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": "Personal memory about the user (from the Engram MCP server; "
                                      "call its recall/remember tools for more):\n\n" + out["brief"]}}))
-    elif name == "SessionEnd" and event.get("transcript_path"):
-        text = transcript_text(event["transcript_path"])
-        if len(text) >= MIN_TRANSCRIPT_CHARS:
-            _post("/api/memory/ingest", {"text": f"[Claude Code session in project {project}]\n{text}",
-                                         "agent": "claude-code", "session_id": sid, "session_end": True}, timeout=4)
+    elif name in ("PreCompact", "SessionEnd"):
+        save(event)
 
 
 if __name__ == "__main__":

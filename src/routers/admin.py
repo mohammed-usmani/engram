@@ -16,6 +16,7 @@ import logging
 
 from src.seed.loader import run_seed
 from src.seed.parser import derive_fields
+from src.memory.api import needs_token
 from src.services.ollama_client import embed
 from src.services.embeddings import embed_all_documents
 
@@ -34,7 +35,9 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 
 def _check_token(request: Request) -> None:
-    if settings.admin_token is None:
+    # Same rule as AuthMiddleware: your own browser on localhost needs no token.
+    if settings.admin_token is None or not needs_token(
+            request.url.path, dict(request.scope.get("headers") or []), request.scope.get("client")):
         return
     token = (
         request.query_params.get("token")
@@ -197,7 +200,8 @@ async def new_submit(
         chosen_slug = f"{chosen_slug}-{i}"
 
     doc = ContextDocument(type=doc_type, slug=chosen_slug, title=title, tags=_parse_tags(tags),
-                          content=content, sections={}, source=Source.MANUAL, doc_metadata={})
+                          content=content, sections={}, source=Source.MANUAL, doc_metadata={},
+                          updated_by="admin")
     await _refresh_derived(doc)
     session.add(doc)
     await session.commit()
@@ -253,6 +257,7 @@ async def edit_submit(
         doc.tags = _parse_tags(tags)
         doc.content = content
         doc.source = Source.MANUAL
+        doc.updated_by = "admin"
         await _refresh_derived(doc)
     except Exception as e:
         return templates.TemplateResponse("edit.html", {

@@ -146,7 +146,7 @@ curl -X POST localhost:8001/api/memory/recall -H 'Content-Type: application/json
 
 | Assistant | Setup |
 |---|---|
-| **Claude Code** | `claude mcp add --transport http -s user engram http://localhost:8001/mcp` — and for automatic memory add [`scripts/claude_memory_hook.py`](scripts/claude_memory_hook.py) as a `UserPromptSubmit` + `SessionEnd` hook (injects a recall on the first prompt, saves the conversation at the end) |
+| **Claude Code** | `claude mcp add --transport http -s user engram http://localhost:8001/mcp` — and add [`scripts/claude_memory_hook.py`](scripts/claude_memory_hook.py) as a `UserPromptSubmit` + `PreCompact` + `SessionEnd` hook (injects a recall on the first prompt, saves what's unsaved before compaction and at the end) |
 | **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.engram]` `url = "http://localhost:8001/mcp"` |
 | **Gemini CLI** | `~/.gemini/settings.json` → `{"mcpServers": {"engram": {"httpUrl": "http://localhost:8001/mcp"}}}` |
 | **Cursor / Windsurf / VS Code** | `{"mcpServers": {"engram": {"url": "http://localhost:8001/mcp"}}}` |
@@ -154,6 +154,16 @@ curl -X POST localhost:8001/api/memory/recall -H 'Content-Type: application/json
 | **claude.ai** | set `ADMIN_TOKEN`, expose port 8001 (e.g. `tailscale funnel --bg 8001`), add `https://<public-url>/mcp` as a custom connector with request header `Authorization: Bearer <token>` |
 | **ChatGPT / other OAuth-only apps** | also set `PUBLIC_URL=https://<public-url>`; add `https://<public-url>/mcp` with **OAuth**, then approve on Engram's consent page by entering `ADMIN_TOKEN` |
 | **Anything else** | REST under `/api/memory/*`, OpenAPI at `/openapi.json` |
+
+**Conversations save themselves.** [`scripts/transcript_sync.py`](scripts/transcript_sync.py) (installed by the
+launchd/systemd scripts, every 10 minutes) reads Claude Code, Codex CLI and Gemini CLI transcripts and sends
+new user/assistant prose to Engram in chunks, each stamped with the agent and the time of its last message.
+Long and still-open sessions are captured in full; one offset file shared with the hook means nothing is sent
+twice. Tools whose transcripts aren't readable (Antigravity, web apps) save through `remember`.
+
+**Every write says who and when.** `remember` requires `agent` (claude-code, claude-web, chatgpt, gemini,
+codex…) and `occurred_at` (when it happened, ISO 8601); `teach` and the document tools require `agent`, and
+documents record it as `updated_by`. Writes without them are rejected.
 
 Local tools on `http://localhost:8001/mcp` (Claude Code, Codex, Gemini CLI, Antigravity, Cursor) need no token
 or sign-in; the token and OAuth only apply to requests that arrive through a tunnel.
@@ -179,8 +189,8 @@ A **profile** document (`profile/linkedin`, `profile/indeed`, `profile/github`�
 a public profile currently shows, so an assistant asked "what does my LinkedIn say?" quotes it instead
 of guessing. Note anything you haven't captured yet in the document itself, so nothing gets invented.
 
-Once `ADMIN_TOKEN` is set, the admin pages ask for it even on your own machine: open
-`http://localhost:8001/api/admin?token=<token>` once and the browser keeps a cookie.
+The admin pages follow the same rule as everything else: no token from your own browser on
+`localhost`, the token for anything arriving through a tunnel.
 
 Text files are only an import path: on an empty database Engram imports `DATA_DIR`
 (`data/examples/` ships a fictional sample), and **Import new files** adds files that aren't in the
@@ -252,7 +262,7 @@ Results at the time of writing:
 
 | | |
 |---|---|
-| `POST /api/memory/remember` | `{text, agent?, session_id?, occurred_at?}` → queued job |
+| `POST /api/memory/remember` | `{text, agent, occurred_at, session_id?}` → queued job |
 | `POST /api/memory/recall` | `{situation, budget_tokens?, session_id?, fast?}` → `{brief, items, plan}` |
 | `POST /api/memory/note` | short-term note for a session |
 | `POST /api/memory/teach` | save a procedure |

@@ -90,22 +90,31 @@ async def test_save_edit_delete_document(mcp_db, monkeypatch):
         return [0.25] * 768
     monkeypatch.setattr(admin, "embed", fake_embed)
 
-    out = await _call(save_document)("project/voiceagent", "Stack: Python\n\nSummary:\nPhone agent.",
+    out = await _call(save_document)("project/voiceagent", "Claude-Code", "Stack: Python\n\nSummary:\nPhone agent.",
                                      title="voiceAgent", tags=["Voice"])
     assert out == {"slug": "project/voiceagent", "title": "voiceAgent", "type": "project", "tags": ["voice"]}
     doc = await _call(get_document)("project/voiceagent")
     assert doc["metadata"]["Stack"] == "Python" and doc["sections"]["Summary"] == "Phone agent."
+    assert doc["updated_by"] == "claude-code"
+    assert "error" in await _call(save_document)("project/voiceagent", "  ", "x")  # who is writing is required
 
-    assert "error" in await _call(save_document)("project/new", "x")  # new doc needs a title
-    assert "error" in await _call(edit_document)("project/voiceagent", "nowhere", "y")
+    assert "error" in await _call(save_document)("project/new", "chatgpt", "x")  # new doc needs a title
+    assert "error" in await _call(edit_document)("project/voiceagent", "nowhere", "y", "chatgpt")
 
-    await _call(edit_document)("project/voiceagent", "Phone agent.", "Outbound phone agent.")
+    await _call(edit_document)("project/voiceagent", "Phone agent.", "Outbound phone agent.", "chatgpt")
     doc = await _call(get_document)("project/voiceagent")
+    assert doc["updated_by"] == "chatgpt"
     assert doc["sections"]["Summary"] == "Outbound phone agent." and doc["title"] == "voiceAgent"
 
-    await _call(save_document)("project/voiceagent", title="voiceAgent v2")  # rename only
+    await _call(save_document)("project/voiceagent", "gemini", title="voiceAgent v2")  # rename only
     doc = await _call(get_document)("project/voiceagent")
     assert doc["title"] == "voiceAgent v2" and doc["sections"]["Summary"] == "Outbound phone agent."
 
-    assert await _call(delete_document)("project/voiceagent") == {"deleted": "project/voiceagent"}
+    assert await _call(delete_document)("project/voiceagent", "claude-code") == {"deleted": "project/voiceagent"}
     assert "error" in await _call(get_document)("project/voiceagent")
+
+
+async def test_mcp_remember_requires_who_and_when(mcp_db):
+    from src.mcp_server import remember
+    assert "error" in await _call(remember)("Applied to Acme", "", "2026-10-03T10:00:00+05:30")
+    assert "error" in await _call(remember)("Applied to Acme", "chatgpt", "yesterday")

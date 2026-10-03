@@ -46,3 +46,39 @@ async def test_new_document_from_site(client, engine, monkeypatch):
 async def test_import_button_adds_only_new_files(client):
     r = await client.post("/api/admin/import", follow_redirects=False)
     assert r.status_code == 303 and "import=" in r.headers["location"]
+
+
+def test_admin_pages_open_locally_but_not_through_a_tunnel(monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    import src.routers.admin as admin
+    monkeypatch.setattr(admin.settings, "admin_token", "secret")
+
+    def req(headers):
+        return Request({"type": "http", "path": "/api/admin", "headers": headers, "client": ("127.0.0.1", 5),
+                        "query_string": b""})
+    admin._check_token(req([(b"host", b"localhost:8001")]))  # local browser: allowed
+    try:
+        admin._check_token(req([(b"host", b"x.ts.net"), (b"x-forwarded-for", b"1.2.3.4")]))
+        raise AssertionError("tunnelled request without a token was let in")
+    except HTTPException as e:
+        assert e.status_code == 401
+
+
+async def test_browser_signs_in_through_a_tunnel(client, monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "admin_token", "secret")
+    tunnel = {"host": "x.ts.net", "x-forwarded-for": "1.2.3.4", "x-forwarded-proto": "https"}
+
+    r = await client.get("/api/admin", headers={**tunnel, "accept": "text/html"})
+    assert r.status_code == 303 and r.headers["location"].startswith("/login?next=")
+    assert (await client.post("/login", data={"admin_token": "nope", "next": "/api/admin"}, headers=tunnel)).status_code == 401
+
+    ok = await client.post("/login", data={"admin_token": "secret", "next": "/api/admin"}, headers=tunnel)
+    assert ok.status_code == 303 and ok.headers["location"] == "/api/admin"
+    assert "admin_token=secret" in ok.headers["set-cookie"] and "Secure" in ok.headers["set-cookie"]
+    signed_in = await client.get("/api/admin", headers={**tunnel, "accept": "text/html", "cookie": "admin_token=secret"})
+    assert signed_in.status_code == 200
+
+    evil = await client.post("/login", data={"admin_token": "secret", "next": "//evil.example"}, headers=tunnel)
+    assert evil.headers["location"] == "/admin"  # no open redirect

@@ -27,7 +27,9 @@ mcp = FastMCP(
         "education, achievements, certifications, and profile/* with the exact current text of "
         "each public profile) are the source of truth for their career: "
         "read with list_documents/get_document, change with edit_document (small edits) or "
-        "save_document (create or replace), remove with delete_document."
+        "save_document (create or replace), remove with delete_document. Every write needs "
+        "`agent` (who you are: claude-code, claude-web, chatgpt, gemini, codex...) and remember() "
+        "also needs `occurred_at`, the real date and time the event happened."
     ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
@@ -49,6 +51,7 @@ def _doc_full(d: ContextDocument) -> dict[str, Any]:
     return {
         "slug": d.slug, "title": d.title, "type": d.type.value, "tags": d.tags,
         "content": d.content, "sections": d.sections, "metadata": d.doc_metadata,
+        "updated_by": d.updated_by, "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
 
 
@@ -117,17 +120,26 @@ async def get_document(slug: str) -> dict:
     return await _with_session(inner)
 
 
-async def _save(session: AsyncSession, doc: ContextDocument) -> dict:
+def _agent(agent: str | None) -> tuple[str, dict | None]:
+    """Every write says who made it, so memory can be traced back to the assistant that wrote it."""
+    who = (agent or "").strip().lower()
+    if not who:
+        return "", {"error": "agent is required: say who you are, e.g. claude-code, chatgpt, gemini"}
+    return who[:64], None
+
+
+async def _save(session: AsyncSession, doc: ContextDocument, agent: str) -> dict:
     # Same path as an edit in /admin: sections and metadata re-derived, re-embedded.
     from src.routers.admin import _refresh_derived
     doc.source = Source.MANUAL
+    doc.updated_by = agent
     await _refresh_derived(doc)
     await session.commit()
     return _doc_summary(doc)
 
 
 @mcp.tool()
-async def save_document(slug: str, content: str | None = None, title: str | None = None,
+async def save_document(slug: str, agent: str, content: str | None = None, title: str | None = None,
                         type: str | None = None, tags: list[str] | None = None) -> dict:
     """Create or fully replace a document about the user (resume, project, experience...).
 
@@ -138,8 +150,12 @@ async def save_document(slug: str, content: str | None = None, title: str | None
 
     New document: slug is '<type>/<name>' (e.g. 'project/voiceagent'); title is required,
     type defaults to the slug's prefix. Existing document: title, type and tags are kept
-    unless you pass them. Types: see list_document_types."""
+    unless you pass them. Types: see list_document_types.
+    `agent` (required): who you are, e.g. claude-code, chatgpt, gemini; stored as updated_by."""
     async def inner(session: AsyncSession):
+        who, err = _agent(agent)
+        if err:
+            return err
         doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
         if doc is None:
             if not title or content is None:
@@ -155,16 +171,20 @@ async def save_document(slug: str, content: str | None = None, title: str | None
             doc.tags = [t.strip().lower() for t in tags if t.strip()]
         if content is not None:
             doc.content = content
-        return await _save(session, doc)
+        return await _save(session, doc, who)
     return await _with_session(inner)
 
 
 @mcp.tool()
-async def edit_document(slug: str, old_text: str, new_text: str) -> dict:
+async def edit_document(slug: str, old_text: str, new_text: str, agent: str) -> dict:
     """Change part of a document: replaces `old_text` with `new_text` in its content.
     `old_text` must appear exactly once (copy it from get_document, including line
-    breaks); otherwise nothing changes and an error says why. Use '' as new_text to delete."""
+    breaks); otherwise nothing changes and an error says why. Use '' as new_text to delete.
+    `agent` (required): who you are, e.g. claude-code, chatgpt, gemini; stored as updated_by."""
     async def inner(session: AsyncSession):
+        who, err = _agent(agent)
+        if err:
+            return err
         doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
         if doc is None:
             return {"error": f"document not found: {slug}"}
@@ -172,19 +192,24 @@ async def edit_document(slug: str, old_text: str, new_text: str) -> dict:
         if count != 1:
             return {"error": f"old_text found {count} times in {slug}; it must match exactly once"}
         doc.content = doc.content.replace(old_text, new_text)
-        return await _save(session, doc)
+        return await _save(session, doc, who)
     return await _with_session(inner)
 
 
 @mcp.tool()
-async def delete_document(slug: str) -> dict:
-    """Permanently delete a document. Only when the user asks, or it is wrong/duplicated."""
+async def delete_document(slug: str, agent: str) -> dict:
+    """Permanently delete a document. Only when the user asks, or it is wrong/duplicated.
+    `agent` (required): who you are."""
     async def inner(session: AsyncSession):
+        who, err = _agent(agent)
+        if err:
+            return err
         doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
         if doc is None:
             return {"error": f"document not found: {slug}"}
         await session.delete(doc)
         await session.commit()
+        log.info("document %s deleted by %s", slug, who)
         return {"deleted": slug}
     return await _with_session(inner)
 
@@ -392,17 +417,26 @@ async def recall(situation: str, session_id: str | None = None, budget_tokens: i
 
 
 @mcp.tool()
-async def remember(text: str, agent: str | None = None, session_id: str | None = None,
-                   occurred_at: str | None = None) -> dict:
+async def remember(text: str, agent: str, occurred_at: str, session_id: str | None = None) -> dict:
     """Save something worth remembering about the user, in plain language. Call it when the user
     shares a fact, preference, decision, outcome or event ("I applied to Acme", "the interview went
-    badly", "I prefer PDFs", "moved to Bangalore"), or at the end of meaningful work. Include dates
-    and outcomes when known. `agent` = your name (claude-code, chatgpt, claude-web...). Extraction
-    runs in the background; returns a job id immediately. `occurred_at` ISO time if not now."""
+    badly", "I prefer PDFs", "moved to Bangalore"), or at the end of meaningful work.
+
+    Required:
+    - `agent`: who you are, e.g. claude-code, claude-web, chatgpt, gemini, codex, antigravity, cursor.
+    - `occurred_at`: when it HAPPENED (not when you're saving it), ISO 8601 with time and offset,
+      e.g. '2026-09-29T18:00:00+05:30'. Use the current time only for things happening right now.
+    One event per call; name companies and people exactly. Extraction runs in the background."""
     from datetime import datetime
     async def inner(session):
-        when = datetime.fromisoformat(occurred_at) if occurred_at else None
-        job_id, created = await _ingest.enqueue(session, text, agent, session_id, when)
+        who, err = _agent(agent)
+        if err:
+            return err
+        try:
+            when = datetime.fromisoformat(occurred_at)
+        except (TypeError, ValueError):
+            return {"error": "occurred_at must be an ISO 8601 date/time, e.g. 2026-09-29T18:00:00+05:30"}
+        job_id, created = await _ingest.enqueue(session, text, who, session_id, when)
         return {"job_id": job_id, "queued": created}
     return await _with_session(inner)
 
@@ -418,11 +452,15 @@ async def note(session_id: str, key: str, value: str) -> dict:
 
 
 @mcp.tool()
-async def teach(name: str, steps: list[str], agent: str | None = None, entities: list[str] | None = None) -> dict:
+async def teach(name: str, steps: list[str], agent: str, entities: list[str] | None = None) -> dict:
     """Save HOW the user does something, step by step (a procedure/workflow), e.g.
-    name='deploy cityfix', steps=['run tests','build image','deploy','verify']."""
+    name='deploy cityfix', steps=['run tests','build image','deploy','verify'].
+    `agent` (required): who you are, e.g. claude-code, chatgpt, gemini."""
     async def inner(session):
-        return {"id": await _ingest.teach(session, name, steps, agent, entities)}
+        who, err = _agent(agent)
+        if err:
+            return err
+        return {"id": await _ingest.teach(session, name, steps, who, entities)}
     return await _with_session(inner)
 
 

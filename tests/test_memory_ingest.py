@@ -103,3 +103,38 @@ async def test_split_events_for_different_companies_are_not_deduped(session, mem
     eps = (await session.execute(select(Episode))).scalars().all()
     assert sorted(tuple(sorted(e.entities)) for e in eps) == [
         ("company:swiggy", "topic:job-search"), ("company:zomato", "topic:job-search")]
+
+
+async def test_one_failed_job_does_not_break_the_rest_of_the_batch(session, mem0_store, monkeypatch):
+    _patch(monkeypatch)
+    real = extract.complete_json
+
+    async def first_fails(prompt, system="", task="default"):
+        if "broken" in prompt:
+            raise ValueError("bad output")
+        return await real(prompt, system, task)
+    monkeypatch.setattr(extract, "complete_json", first_fails)
+    bad, _ = await ingest.enqueue(session, "broken payload", agent="t", occurred_at=WHEN)
+    good, _ = await ingest.enqueue(session, "I had my Acme onsite today", agent="t", occurred_at=WHEN)
+    assert await ingest.process_pending(session) == 2
+    assert (await session.get(IngestJob, bad)).status == "pending"
+    assert (await session.get(IngestJob, good)).status == "done"
+
+
+async def test_a_batch_extracts_concurrently(session, mem0_store, monkeypatch):
+    import asyncio
+    import time
+    _patch(monkeypatch)
+    real = extract.complete_json
+
+    async def slow(prompt, system="", task="default"):
+        await asyncio.sleep(0.5)
+        return await real(prompt, system, task)
+    monkeypatch.setattr(extract, "complete_json", slow)
+    for i in range(4):
+        await ingest.enqueue(session, f"job {i}: I had my Acme onsite", agent="t", occurred_at=WHEN)
+    t = time.monotonic()
+    assert await ingest.process_pending(session, limit=4) == 4
+    assert time.monotonic() - t < 1.5  # four 0.5 s extractions overlapped, not 2 s in a row
+    statuses = (await session.execute(select(IngestJob.status))).scalars().all()
+    assert statuses == ["done"] * 4

@@ -1,0 +1,8 @@
+# Saves coding-assistant conversations into Engram (scripts/transcript_sync.py). Triggered by engram-sync.timer.
+[Unit]
+Description=Engram transcript sync
+
+[Service]
+Type=oneshot
+WorkingDirectory=__REPO__
+ExecStart=/usr/bin/python3 __REPO__/scripts/transcript_sync.py

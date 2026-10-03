@@ -10,6 +10,8 @@ for SRC in "$REPO"/scripts/systemd/engram-*.service "$REPO"/scripts/systemd/engr
 done
 systemctl --user daemon-reload
 systemctl --user enable --now engram-backup.timer
+python3 "$REPO"/scripts/transcript_sync.py --init  # don't resend history on first install
+systemctl --user enable --now engram-sync.timer
 systemctl --user enable engram-api.service
 systemctl --user restart engram-api.service
 echo "engram-api: $(systemctl --user is-active engram-api) · backup timer: $(systemctl --user is-active engram-backup.timer)"

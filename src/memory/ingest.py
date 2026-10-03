@@ -1,8 +1,10 @@
 """Write path: queue → redact → extract → resolve → store → reconcile → mark dirty."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text as sql
@@ -122,15 +124,23 @@ async def _reconcile(new_facts: list[tuple[str, str]]) -> dict:
     return {"superseded": sup, "duplicates": dup}
 
 
-async def process_job(session: AsyncSession, job: IngestJob) -> dict:
+async def _known_entities(session: AsyncSession) -> list[str]:
+    return list((await session.execute(select(Entity.name).order_by(Entity.updated_at.desc()).limit(60))).scalars())
+
+
+async def process_job(session: AsyncSession, job: IngestJob, extraction=None) -> dict:
+    """Extract (unless process_pending already did, passing the result or its exception) and write."""
     job_id = job.id
-    job.status, job.attempts = "processing", job.attempts + 1
-    await session.commit()
+    if extraction is None:
+        job.status, job.attempts = "processing", job.attempts + 1
+        await session.commit()
     try:
-        await _undo_partial(session, job)
-        text = redact(job.text)
-        known = list((await session.execute(select(Entity.name).order_by(Entity.updated_at.desc()).limit(60))).scalars())
-        ex = await extract(text, job.occurred_at, known)
+        if extraction is None:
+            await _undo_partial(session, job)
+            extraction = await extract(redact(job.text), job.occurred_at, await _known_entities(session))
+        if isinstance(extraction, BaseException):
+            raise extraction
+        ex = extraction
 
         names = {e["name"]: e["kind"] for e in ex.entities}
         for item in [*ex.episodes, *ex.facts, *ex.procedures]:
@@ -218,20 +228,41 @@ async def retry_job(session: AsyncSession, job_id: int) -> bool:
     return True
 
 
-async def process_pending(session: AsyncSession, limit: int = 5) -> int:
+CONCURRENCY = int(os.environ.get("MEMORY_WORKER_CONCURRENCY", "4"))
+
+
+async def process_pending(session: AsyncSession, limit: int = CONCURRENCY) -> int:
     """Process up to `limit` due jobs. Retries back off exponentially (2^n − 1 min, capped at 1h)."""
     # A crash/restart mid-job leaves it 'processing' forever unless we take it back.
     await session.execute(sql(f"UPDATE ingest_jobs SET status = 'pending' "
                               f"WHERE status = 'processing' AND updated_at < now() - interval '{STUCK_AFTER}'"))
     await session.commit()
-    jobs = (await session.execute(
-        select(IngestJob)
+    ids = (await session.execute(
+        select(IngestJob.id)
         .where(IngestJob.status == "pending",
                IngestJob.updated_at <= sql(
                    "now() - make_interval(mins => least(60, power(2, ingest_jobs.attempts + "
                    "coalesce((ingest_jobs.result->>'_outages')::int, 0))::int - 1))"))
         .order_by(IngestJob.id).limit(limit).with_for_update(skip_locked=True)
     )).scalars().all()
-    for job in jobs:
-        await process_job(session, job)
-    return len(jobs)
+    if not ids:
+        return 0
+
+    # The LLM extraction is the slow part (~1 min a chunk) and touches no data, so the batch's
+    # extractions run concurrently. Writing stays one job at a time, in order, so duplicate checks
+    # and fact reconciliation never race each other.
+    work = []
+    for job in [await session.get(IngestJob, i) for i in ids]:
+        job.status, job.attempts = "processing", job.attempts + 1
+        work.append((job.id, redact(job.text), job.occurred_at))
+    await session.commit()
+    for job_id, _, _ in work:
+        await _undo_partial(session, await session.get(IngestJob, job_id))
+    known = await _known_entities(session)
+    results = await asyncio.gather(*(extract(text, when, known) for _, text, when in work), return_exceptions=True)
+
+    for (job_id, _, _), result in zip(work, results):
+        # Load each job fresh: a failed job rolls the session back, which expires anything loaded
+        # earlier, and touching an expired job here raised MissingGreenlet for the rest of the batch.
+        await process_job(session, await session.get(IngestJob, job_id), extraction=result)
+    return len(ids)

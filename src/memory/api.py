@@ -1,13 +1,16 @@
 """REST surface for assistants without MCP (and the OpenAPI spec for Gemini Gems / ChatGPT Actions)."""
 from __future__ import annotations
 
+import hmac
 from datetime import datetime
+from http.cookies import SimpleCookie
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, RedirectResponse
 
 from src.config import settings
 from src.database import get_session
@@ -26,7 +29,7 @@ def bearer_ok(authorization: str | None) -> bool:
 _FORWARDED = (b"x-forwarded-for", b"forwarded", b"x-real-ip", b"cf-connecting-ip", b"true-client-ip",
               b"x-forwarded-host")
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
-_OPEN_PATHS = ("/api/health", *oauth.OPEN_PATHS)
+_OPEN_PATHS = ("/api/health", "/login", *oauth.OPEN_PATHS)
 
 
 def needs_token(path: str, headers: dict, client) -> bool:
@@ -42,9 +45,15 @@ def needs_token(path: str, headers: dict, client) -> bool:
     return not local or any(h in headers for h in _FORWARDED)
 
 
-async def _authorized(authorization: str | None) -> bool:
-    """The admin token, or an access token issued to an OAuth client (ChatGPT...)."""
-    if bearer_ok(authorization):
+def cookie_token(headers: dict) -> str | None:
+    """The admin token a browser keeps after signing in on /login."""
+    jar = SimpleCookie(headers.get(b"cookie", b"").decode())
+    return jar["admin_token"].value if "admin_token" in jar else None
+
+
+async def _authorized(authorization: str | None, cookie: str | None = None) -> bool:
+    """The admin token (header or sign-in cookie), or an access token issued to an OAuth client."""
+    if bearer_ok(authorization) or (cookie and hmac.compare_digest(cookie, settings.admin_token or "")):
         return True
     token = (authorization or "").removeprefix("Bearer ").strip()
     return bool(token and oauth.provider and await oauth.provider.load_access_token(token))
@@ -60,7 +69,12 @@ class AuthMiddleware:
         if scope["type"] == "http" and settings.admin_token:
             headers = dict(scope.get("headers") or [])
             if needs_token(scope["path"], headers, scope.get("client")) and \
-                    not await _authorized(headers.get(b"authorization", b"").decode() or None):
+                    not await _authorized(headers.get(b"authorization", b"").decode() or None,
+                                          cookie_token(headers)):
+                if scope["method"] == "GET" and b"text/html" in headers.get(b"accept", b""):
+                    # A person in a browser: send them to sign in, then back here.
+                    nxt = scope["path"] + ("?" + scope["query_string"].decode() if scope["query_string"] else "")
+                    return await RedirectResponse(f"/login?{urlencode({'next': nxt})}", 303)(scope, receive, send)
                 # Tells OAuth clients where to discover how to sign in.
                 meta = oauth.resource_metadata_url()
                 extra = {"WWW-Authenticate": f'Bearer resource_metadata="{meta}"'} if meta else None
@@ -71,9 +85,10 @@ class AuthMiddleware:
 class RememberIn(BaseModel):
     text: str = Field(..., min_length=1, max_length=200_000,
                       description="What happened / what you learned about the user, in plain language")
-    agent: str | None = Field(None, description="Which assistant is writing, e.g. claude-code, chatgpt")
+    agent: str = Field(..., min_length=1, max_length=64,
+                       description="Who is writing: claude-code, claude-web, chatgpt, gemini, codex, antigravity...")
     session_id: str | None = None
-    occurred_at: datetime | None = Field(None, description="When it happened (defaults to now)")
+    occurred_at: datetime = Field(..., description="When it happened (not when it's being saved), ISO 8601")
 
 
 class IngestIn(RememberIn):
@@ -90,7 +105,7 @@ class NoteIn(BaseModel):
 class TeachIn(BaseModel):
     name: str = Field(..., description="Task name, e.g. 'deploy cityfix'")
     steps: list[str] = Field(..., min_length=1)
-    agent: str | None = None
+    agent: str = Field(..., min_length=1, max_length=64, description="Who is writing, e.g. claude-code, chatgpt")
     entities: list[str] = Field(default_factory=list, description="Related topics/projects by name")
 
 

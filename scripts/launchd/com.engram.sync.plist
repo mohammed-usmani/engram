@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Saves coding-assistant conversations into Engram every 10 minutes (scripts/transcript_sync.py). Installed by scripts/launchd/install.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.engram.sync</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>__REPO__/scripts/transcript_sync.py</string></array>
+  <key>StartInterval</key><integer>600</integer>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/engram-sync.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/engram-sync.log</string>
+</dict>
+</plist>

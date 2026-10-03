@@ -51,6 +51,7 @@ class ContextDocument(Base):
     doc_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict
     )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)  # assistant or "admin"
     search_vector: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(768), nullable=True)
 

@@ -147,11 +147,18 @@ def _list(data: dict, key: str) -> list[dict]:
     return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
 
 
+def extract_prompt(text: str, occurred_at: datetime, known: list[str] | None = None) -> str:
+    return PROMPT.format(now=occurred_at.astimezone(USER_TZ).isoformat(), known=", ".join(known or []) or "none",
+                         text=text)
+
+
 async def extract(text: str, occurred_at: datetime, known: list[str] | None = None) -> Extraction:
-    data = await complete_json(
-        PROMPT.format(now=occurred_at.astimezone(USER_TZ).isoformat(), known=", ".join(known or []) or "none", text=text),
-        system=SYSTEM, task="extract",
-    )
+    data = await complete_json(extract_prompt(text, occurred_at, known), system=SYSTEM, task="extract")
+    return parse_extraction(data, occurred_at)
+
+
+def parse_extraction(data, occurred_at: datetime) -> Extraction:
+    """Model JSON -> a cleaned Extraction (shared by live calls and batch results)."""
     ex = Extraction()
     ex.entities = [{"name": e["name"].strip(), "kind": str(e.get("kind") or "topic").lower()}
                    for e in _list(data, "entities") if isinstance(e.get("name"), str) and e["name"].strip()]

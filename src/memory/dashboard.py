@@ -107,8 +107,11 @@ async def memory_page(request: Request, tab: str = "overview", q: str | None = N
             select(SessionState).where(SessionState.expires_at > now).order_by(SessionState.created_at.desc())
         )).scalars().all()
     if tab == "queue":
+        from src.memory import batch
         ctx["jobs"] = (await session.execute(
             select(IngestJob).order_by(IngestJob.id.desc()).limit(100))).scalars().all()
+        ctx["batch"] = {"on": await batch.is_on(session), "available": batch.available(),
+                        "model": batch.model(), "counts": await batch.counts(session)}
     return templates.TemplateResponse(request, "memory.html", ctx)
 
 

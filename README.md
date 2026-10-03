@@ -236,6 +236,15 @@ Results at the time of writing:
 
 <sub>*≈ 15 coding sessions, 20 notes and 30 recalls a day. Writes are asynchronous, so latency never blocks your assistant.</sub>
 
+### Batch mode for big backlogs
+
+When the queue piles up (an import, a long day of sessions), the **Queue** tab on the Memory page has a
+**Switch queue to batch mode** button. The live workers then stand aside and, about once a minute, every
+waiting job goes to Together's Batch API as one batch; results come back in minutes to hours and are saved
+exactly like live extractions. Batches already sent are still collected after you switch back. Batches cost
+about half and use their own rate limits, but Together only batches serverless models (DeepSeek-V4-Flash is
+refused), so they use `MEMORY_BATCH_MODEL`, default `openai/gpt-oss-120b` (126/126 on the eval above).
+
 ## Your data stays yours
 
 - **Local-first.** One process on `127.0.0.1:8001`; embeddings run on your machine.

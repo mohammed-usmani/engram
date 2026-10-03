@@ -128,10 +128,11 @@ async def _known_entities(session: AsyncSession) -> list[str]:
     return list((await session.execute(select(Entity.name).order_by(Entity.updated_at.desc()).limit(60))).scalars())
 
 
-async def process_job(session: AsyncSession, job: IngestJob) -> dict:
+async def process_job(session: AsyncSession, job: IngestJob, extraction=None) -> dict:
     """Extract one job and write what it found. Several workers run this at once (one per
     MEMORY_WORKER_CONCURRENCY slot): the LLM call overlaps, the writes take turns under _WRITE_LOCK
-    so duplicate checks and fact reconciliation never race each other."""
+    so duplicate checks and fact reconciliation never race each other. `extraction` is passed
+    when it was already done elsewhere (a batch result)."""
     job_id = job.id
     job.status, job.attempts = "processing", job.attempts + 1
     await session.commit()
@@ -139,7 +140,7 @@ async def process_job(session: AsyncSession, job: IngestJob) -> dict:
         async with _WRITE_LOCK:
             await _undo_partial(session, job)
             known = await _known_entities(session)
-        ex = await extract(redact(job.text), job.occurred_at, known)
+        ex = extraction or await extract(redact(job.text), job.occurred_at, known)
 
         async with _WRITE_LOCK:
             names = {e["name"]: e["kind"] for e in ex.entities}
@@ -233,7 +234,11 @@ _WRITE_LOCK = asyncio.Lock()
 
 
 async def process_pending(session: AsyncSession, limit: int = 1) -> int:
-    """Process up to `limit` due jobs. Retries back off exponentially (2^n − 1 min, capped at 1h)."""
+    """Process up to `limit` due jobs. Retries back off exponentially (2^n − 1 min, capped at 1h).
+    In batch mode the live workers stand aside; src/memory/batch.py sends the queue instead."""
+    from src.memory import batch
+    if await batch.is_on(session):
+        return 0
     # A crash/restart mid-job leaves it 'processing' forever unless we take it back.
     await session.execute(sql(f"UPDATE ingest_jobs SET status = 'pending' "
                               f"WHERE status = 'processing' AND updated_at < now() - interval '{STUCK_AFTER}'"))

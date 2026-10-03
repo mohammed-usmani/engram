@@ -122,6 +122,20 @@ async def remember(body: RememberIn, session: AsyncSession = Depends(get_session
     return {"job_id": job_id, "queued": created}
 
 
+class BatchModeIn(BaseModel):
+    on: bool
+
+
+@router.post("/batch-mode")
+async def batch_mode(body: BatchModeIn, session: AsyncSession = Depends(get_session)):
+    """Send the extraction queue to the provider's batch API (cheaper, slower) instead of live calls."""
+    from src.memory import batch
+    if body.on and not batch.available():
+        raise HTTPException(400, "batch mode needs TOGETHER_API_KEY")
+    await batch.set_mode(session, body.on)
+    return {"on": body.on, "model": batch.model()}
+
+
 @router.post("/ingest", status_code=202)
 async def ingest_hook(body: IngestIn, session: AsyncSession = Depends(get_session)):
     """For session-end hooks: queue the transcript and consolidate once the queue drains."""

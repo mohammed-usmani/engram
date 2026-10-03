@@ -174,6 +174,22 @@
   </table>
 
 {% elif tab == "queue" %}
+  {% set c = batch.counts %}
+  <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;padding:.8rem 1rem;border:1px solid var(--border);border-radius:var(--radius)">
+    <div style="flex:1;min-width:240px">
+      <b>Batch mode: {{ "On" if batch.on else "Off" }}</b>
+      <div class="muted" style="font-size:.9rem">
+        {% if batch.on %}The queue goes to the batch API about once a minute ({{ batch.model }}): about half the cost, results in minutes to hours.
+        {% else %}Jobs are extracted live, several at a time.{% if (c.pending or 0) > 25 %} <b>{{ c.pending }} waiting</b>: batch mode would clear it cheaper.{% endif %}{% endif %}
+        {% if c.batched %} · {{ c.batched }} in sent batches{% endif %}
+      </div>
+    </div>
+    {% if batch.available %}
+    <button onclick="fetch('/api/memory/batch-mode', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                       body: JSON.stringify({on: {{ 'false' if batch.on else 'true' }}})}).then(() => location.reload())">
+      {{ "Turn off batch mode" if batch.on else "Switch queue to batch mode" }}</button>
+    {% else %}<span class="muted">Needs TOGETHER_API_KEY</span>{% endif %}
+  </div>
   <table>
     <thead><tr><th>#</th><th>Status</th><th>From</th><th>Received</th><th>Result</th><th>Preview</th><th></th></tr></thead>
     <tbody>

@@ -11,11 +11,13 @@ import time
 
 from src.database import AsyncSessionLocal
 from src.memory.consolidate import consolidate
+from src.memory import batch
 from src.memory.ingest import CONCURRENCY, process_pending
 
 log = logging.getLogger(__name__)
 
 _soon = False
+BATCH_EVERY_S = 60
 
 
 def request_consolidation() -> None:
@@ -48,8 +50,23 @@ async def _slot(stop: asyncio.Event, idle_sleep: float, consolidates: bool) -> N
                 pass
 
 
+async def _batches(stop: asyncio.Event) -> None:
+    """Its own loop, so a slot busy with a slow live job can't delay sending or collecting batches."""
+    while not stop.is_set():
+        try:
+            async with AsyncSessionLocal() as session:
+                await batch.tick(session)  # collect finished batches; send the queue in batch mode
+        except Exception:
+            log.exception("batch tick failed")
+        try:
+            await asyncio.wait_for(stop.wait(), BATCH_EVERY_S)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
-    await asyncio.gather(*(_slot(stop, idle_sleep, consolidates=i == 0) for i in range(max(1, CONCURRENCY))))
+    await asyncio.gather(_batches(stop),
+                         *(_slot(stop, idle_sleep, consolidates=i == 0) for i in range(max(1, CONCURRENCY))))
 
 
 if __name__ == "__main__":

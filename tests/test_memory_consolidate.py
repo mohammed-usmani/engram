@@ -83,10 +83,14 @@ async def test_worker_processes_and_stops(monkeypatch):
         return {}
     monkeypatch.setattr(worker, "process_pending", fake_pending)
     monkeypatch.setattr(worker, "consolidate", fake_consolidate)
+
+    async def no_batches(session):
+        seen.append("b")
+    monkeypatch.setattr(worker.batch, "tick", no_batches)
     stop = asyncio.Event()
     worker.request_consolidation()
     task = asyncio.create_task(worker.run_worker(stop, idle_sleep=0.01))
     await asyncio.sleep(0.1)
     stop.set()
     await asyncio.wait_for(task, 2)
-    assert "p" in seen and "c" in seen
+    assert "p" in seen and "c" in seen and "b" in seen

@@ -65,14 +65,19 @@ def parse_json(raw: str):
 
 async def complete_json(prompt: str, system: str = "", task: str = "default") -> dict | list:
     errors = []
+    attempts = int(os.environ.get("MEMORY_LLM_ATTEMPTS", "2"))
     for name in chain(task):
-        try:
-            # one stuck call must not hold the single-worker queue for minutes (seen: 356s)
-            raw = await asyncio.wait_for(
-                _make(name).generate(prompt, system=system + "\nRespond with valid JSON only.", json=True),
-                timeout=float(os.environ.get("MEMORY_LLM_TIMEOUT", "180")))  # a 12k-char chunk took ~110 s
-            return parse_json(raw)
-        except Exception as e:  # rate limit, timeout, bad key, invalid JSON — all mean "try the next one"
-            log.warning("memory llm %s failed for task=%s: %s", name, task, (str(e) or type(e).__name__)[:200])
-            errors.append(f"{name}: {(str(e) or type(e).__name__)[:120]}")  # a timeout has no message
+        # Together occasionally never answers one request (seen: 400 s) or returns empty content,
+        # and the same request then succeeds in ~20 s, so retry a provider before falling back.
+        for attempt in range(attempts):
+            try:
+                # one stuck call must not hold the queue for minutes (seen: 356s)
+                raw = await asyncio.wait_for(
+                    _make(name).generate(prompt, system=system + "\nRespond with valid JSON only.", json=True),
+                    timeout=float(os.environ.get("MEMORY_LLM_TIMEOUT", "180")))  # a 12k-char chunk took ~110 s
+                return parse_json(raw)
+            except Exception as e:  # rate limit, timeout, bad key, invalid JSON — retry, then the next one
+                msg = (str(e) or type(e).__name__)[:200]
+                log.warning("memory llm %s attempt %d failed for task=%s: %s", name, attempt + 1, task, msg)
+                errors.append(f"{name}: {msg[:120]}")  # a timeout has no message
     raise LLMUnavailable("; ".join(errors) or "no providers configured")

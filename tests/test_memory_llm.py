@@ -27,7 +27,18 @@ async def test_falls_through_rate_limit(fakes):
     fakes["gemini"] = _Fake("gemini", exc=RuntimeError("429 Too Many Requests"))
     fakes["groq"] = _Fake("groq", reply='{"a": 1}')
     assert await llm.complete_json("x") == {"a": 1}
-    assert fakes["gemini"].calls == 1
+    assert fakes["gemini"].calls == 2  # retried once, then fell through
+
+
+async def test_a_flaky_provider_is_retried_before_falling_back(fakes):
+    class Flaky(_Fake):
+        async def generate(self, message, system="", history=None, json=False):
+            self.calls += 1
+            return "" if self.calls == 1 else '{"ok": 1}'  # empty once, then fine (seen on Together)
+    fakes["together"] = Flaky("together")
+    fakes["ollama"] = _Fake("ollama", reply='{"slow": 1}')
+    assert await llm.complete_json("x") == {"ok": 1}
+    assert fakes["ollama"].calls == 0
 
 
 async def test_invalid_json_moves_on_and_fenced_json_parses(fakes):

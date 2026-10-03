@@ -11,7 +11,7 @@ import time
 
 from src.database import AsyncSessionLocal
 from src.memory.consolidate import consolidate
-from src.memory.ingest import process_pending
+from src.memory.ingest import CONCURRENCY, process_pending
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +24,9 @@ def request_consolidation() -> None:
     _soon = True
 
 
-async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
+async def _slot(stop: asyncio.Event, idle_sleep: float, consolidates: bool) -> None:
+    """One worker slot: claims the next due job as soon as it's free, so a stuck LLM call only
+    holds its own slot (a fixed batch waited for its slowest job, one hang blocked four)."""
     global _soon
     every = float(os.environ.get("CONSOLIDATE_EVERY_H", "6")) * 3600
     last = time.monotonic()
@@ -32,7 +34,7 @@ async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
         try:
             async with AsyncSessionLocal() as session:
                 n = await process_pending(session)
-                if n == 0 and (_soon or time.monotonic() - last >= every):
+                if consolidates and n == 0 and (_soon or time.monotonic() - last >= every):
                     _soon = False
                     last = time.monotonic()
                     log.info("consolidation: %s", await consolidate(session))
@@ -44,6 +46,10 @@ async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
                 await asyncio.wait_for(stop.wait(), idle_sleep)
             except asyncio.TimeoutError:
                 pass
+
+
+async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
+    await asyncio.gather(*(_slot(stop, idle_sleep, consolidates=i == 0) for i in range(max(1, CONCURRENCY))))
 
 
 if __name__ == "__main__":

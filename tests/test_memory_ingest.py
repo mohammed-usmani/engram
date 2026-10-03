@@ -116,14 +116,15 @@ async def test_one_failed_job_does_not_break_the_rest_of_the_batch(session, mem0
     monkeypatch.setattr(extract, "complete_json", first_fails)
     bad, _ = await ingest.enqueue(session, "broken payload", agent="t", occurred_at=WHEN)
     good, _ = await ingest.enqueue(session, "I had my Acme onsite today", agent="t", occurred_at=WHEN)
-    assert await ingest.process_pending(session) == 2
+    assert await ingest.process_pending(session, limit=2) == 2
     assert (await session.get(IngestJob, bad)).status == "pending"
     assert (await session.get(IngestJob, good)).status == "done"
 
 
-async def test_a_batch_extracts_concurrently(session, mem0_store, monkeypatch):
+async def test_worker_slots_extract_concurrently(engine, mem0_store, monkeypatch):
     import asyncio
     import time
+    from sqlalchemy.ext.asyncio import async_sessionmaker
     _patch(monkeypatch)
     real = extract.complete_json
 
@@ -131,10 +132,16 @@ async def test_a_batch_extracts_concurrently(session, mem0_store, monkeypatch):
         await asyncio.sleep(0.5)
         return await real(prompt, system, task)
     monkeypatch.setattr(extract, "complete_json", slow)
-    for i in range(4):
-        await ingest.enqueue(session, f"job {i}: I had my Acme onsite", agent="t", occurred_at=WHEN)
+    Session = async_sessionmaker(bind=engine, expire_on_commit=False)
+    async with Session() as s:
+        for i in range(4):
+            await ingest.enqueue(s, f"job {i}: I had my Acme onsite", agent="t", occurred_at=WHEN)
+
+    async def slot():
+        async with Session() as s:
+            return await ingest.process_pending(s)
     t = time.monotonic()
-    assert await ingest.process_pending(session, limit=4) == 4
+    assert sum(await asyncio.gather(*(slot() for _ in range(4)))) == 4  # each slot took a different job
     assert time.monotonic() - t < 1.5  # four 0.5 s extractions overlapped, not 2 s in a row
-    statuses = (await session.execute(select(IngestJob.status))).scalars().all()
-    assert statuses == ["done"] * 4
+    async with Session() as s:
+        assert (await s.execute(select(IngestJob.status))).scalars().all() == ["done"] * 4

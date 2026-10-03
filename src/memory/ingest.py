@@ -128,67 +128,67 @@ async def _known_entities(session: AsyncSession) -> list[str]:
     return list((await session.execute(select(Entity.name).order_by(Entity.updated_at.desc()).limit(60))).scalars())
 
 
-async def process_job(session: AsyncSession, job: IngestJob, extraction=None) -> dict:
-    """Extract (unless process_pending already did, passing the result or its exception) and write."""
+async def process_job(session: AsyncSession, job: IngestJob) -> dict:
+    """Extract one job and write what it found. Several workers run this at once (one per
+    MEMORY_WORKER_CONCURRENCY slot): the LLM call overlaps, the writes take turns under _WRITE_LOCK
+    so duplicate checks and fact reconciliation never race each other."""
     job_id = job.id
-    if extraction is None:
-        job.status, job.attempts = "processing", job.attempts + 1
-        await session.commit()
+    job.status, job.attempts = "processing", job.attempts + 1
+    await session.commit()
     try:
-        if extraction is None:
+        async with _WRITE_LOCK:
             await _undo_partial(session, job)
-            extraction = await extract(redact(job.text), job.occurred_at, await _known_entities(session))
-        if isinstance(extraction, BaseException):
-            raise extraction
-        ex = extraction
+            known = await _known_entities(session)
+        ex = await extract(redact(job.text), job.occurred_at, known)
 
-        names = {e["name"]: e["kind"] for e in ex.entities}
-        for item in [*ex.episodes, *ex.facts, *ex.procedures]:
-            for n in item["entities"]:
-                names.setdefault(n, "topic")
-        mapping = await ent.resolve(session, [{"name": n, "kind": k} for n, k in names.items()])
-        slugs = lambda ns: sorted({mapping[n] for n in ns if n in mapping})  # noqa: E731
+        async with _WRITE_LOCK:
+            names = {e["name"]: e["kind"] for e in ex.entities}
+            for item in [*ex.episodes, *ex.facts, *ex.procedures]:
+                for n in item["entities"]:
+                    names.setdefault(n, "topic")
+            mapping = await ent.resolve(session, [{"name": n, "kind": k} for n, k in names.items()])
+            slugs = lambda ns: sorted({mapping[n] for n in ns if n in mapping})  # noqa: E731
 
-        n_eps = 0
-        for e in ex.episodes:
-            vec = await embed(e["summary"])
-            if await _is_duplicate_episode(session, e["kind"], e["occurred_at"], vec, slugs(e["entities"])):
-                continue
-            session.add(Episode(
-                occurred_at=e["occurred_at"], kind=e["kind"], summary=e["summary"], outcome=e["outcome"],
-                sentiment=e["sentiment"], importance=e["importance"], entities=slugs(e["entities"]),
-                source_agent=job.agent, session_id=job.session_id, embedding=vec, payload={"job": job_id},
-            ))
-            n_eps += 1
+            n_eps = 0
+            for e in ex.episodes:
+                vec = await embed(e["summary"])
+                if await _is_duplicate_episode(session, e["kind"], e["occurred_at"], vec, slugs(e["entities"])):
+                    continue
+                session.add(Episode(
+                    occurred_at=e["occurred_at"], kind=e["kind"], summary=e["summary"], outcome=e["outcome"],
+                    sentiment=e["sentiment"], importance=e["importance"], entities=slugs(e["entities"]),
+                    source_agent=job.agent, session_id=job.session_id, embedding=vec, payload={"job": job_id},
+                ))
+                n_eps += 1
 
-        for n in ex.session_notes:
-            if job.session_id:
-                await note(session, job.session_id, n["key"], n["value"])
+            for n in ex.session_notes:
+                if job.session_id:
+                    await note(session, job.session_id, n["key"], n["value"])
 
-        touched = set(mapping.values())
-        if touched:
-            await session.execute(sql("UPDATE entities SET dirty = true WHERE slug = ANY(:s)"), {"s": list(touched)})
-        await session.commit()
-
-        # mem0 writes last: they can't be rolled back with the DB transaction.
-        # Each fact id is recorded as it is written so a retry can undo a partial run.
-        new_facts = []
-        pending = [(f["text"], dict(kind=f["kind"], entities=slugs(f["entities"]), importance=f["importance"]))
-                   for f in ex.facts]
-        pending += [(f"How to {p['name']}: " + " → ".join(f"{i}. {s}" for i, s in enumerate(p["steps"], 1)),
-                     dict(kind="procedure", entities=slugs(p["entities"]), importance=4)) for p in ex.procedures]
-        for body, kw in pending:
-            fid = await facts.add_fact(body, agent=job.agent, **kw)
-            new_facts.append((fid, body))
-            job.result = {**job.result, "fact_ids": [f for f, _ in new_facts]}
+            touched = set(mapping.values())
+            if touched:
+                await session.execute(sql("UPDATE entities SET dirty = true WHERE slug = ANY(:s)"), {"s": list(touched)})
             await session.commit()
-        rec = await _reconcile(new_facts)
 
-        job.status, job.error = "done", None
-        job.result = {"episodes": n_eps, "facts": len(new_facts), "entities": sorted(touched),
-                      "notes": len(ex.session_notes), "fact_ids": [f for f, _ in new_facts], **rec}
-        await session.commit()
-        return job.result
+            # mem0 writes last: they can't be rolled back with the DB transaction.
+            # Each fact id is recorded as it is written so a retry can undo a partial run.
+            new_facts = []
+            pending = [(f["text"], dict(kind=f["kind"], entities=slugs(f["entities"]), importance=f["importance"]))
+                       for f in ex.facts]
+            pending += [(f"How to {p['name']}: " + " → ".join(f"{i}. {s}" for i, s in enumerate(p["steps"], 1)),
+                         dict(kind="procedure", entities=slugs(p["entities"]), importance=4)) for p in ex.procedures]
+            for body, kw in pending:
+                fid = await facts.add_fact(body, agent=job.agent, **kw)
+                new_facts.append((fid, body))
+                job.result = {**job.result, "fact_ids": [f for f, _ in new_facts]}
+                await session.commit()
+            rec = await _reconcile(new_facts)
+
+            job.status, job.error = "done", None
+            job.result = {"episodes": n_eps, "facts": len(new_facts), "entities": sorted(touched),
+                          "notes": len(ex.session_notes), "fact_ids": [f for f, _ in new_facts], **rec}
+            await session.commit()
+            return job.result
     except Exception as e:
         await session.rollback()
         job = await session.get(IngestJob, job_id)
@@ -228,10 +228,11 @@ async def retry_job(session: AsyncSession, job_id: int) -> bool:
     return True
 
 
-CONCURRENCY = int(os.environ.get("MEMORY_WORKER_CONCURRENCY", "4"))
+CONCURRENCY = int(os.environ.get("MEMORY_WORKER_CONCURRENCY", "4"))  # parallel worker slots
+_WRITE_LOCK = asyncio.Lock()
 
 
-async def process_pending(session: AsyncSession, limit: int = CONCURRENCY) -> int:
+async def process_pending(session: AsyncSession, limit: int = 1) -> int:
     """Process up to `limit` due jobs. Retries back off exponentially (2^n − 1 min, capped at 1h)."""
     # A crash/restart mid-job leaves it 'processing' forever unless we take it back.
     await session.execute(sql(f"UPDATE ingest_jobs SET status = 'pending' "
@@ -245,24 +246,8 @@ async def process_pending(session: AsyncSession, limit: int = CONCURRENCY) -> in
                    "coalesce((ingest_jobs.result->>'_outages')::int, 0))::int - 1))"))
         .order_by(IngestJob.id).limit(limit).with_for_update(skip_locked=True)
     )).scalars().all()
-    if not ids:
-        return 0
-
-    # The LLM extraction is the slow part (~1 min a chunk) and touches no data, so the batch's
-    # extractions run concurrently. Writing stays one job at a time, in order, so duplicate checks
-    # and fact reconciliation never race each other.
-    work = []
-    for job in [await session.get(IngestJob, i) for i in ids]:
-        job.status, job.attempts = "processing", job.attempts + 1
-        work.append((job.id, redact(job.text), job.occurred_at))
-    await session.commit()
-    for job_id, _, _ in work:
-        await _undo_partial(session, await session.get(IngestJob, job_id))
-    known = await _known_entities(session)
-    results = await asyncio.gather(*(extract(text, when, known) for _, text, when in work), return_exceptions=True)
-
-    for (job_id, _, _), result in zip(work, results):
+    for job_id in ids:
         # Load each job fresh: a failed job rolls the session back, which expires anything loaded
-        # earlier, and touching an expired job here raised MissingGreenlet for the rest of the batch.
-        await process_job(session, await session.get(IngestJob, job_id), extraction=result)
+        # earlier, and touching an expired job raised MissingGreenlet for the rest of the batch.
+        await process_job(session, await session.get(IngestJob, job_id))
     return len(ids)

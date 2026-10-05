@@ -58,10 +58,11 @@ Momentum is good; DSA rounds go well, system design is the recurring weak spot.
 - [f:2c…] How to apply: 1. cv send <company> → 2. log it → 3. follow up in 7 days
 ```
 
-## How it works
-
 ## See it in two minutes
+
 https://github.com/user-attachments/assets/efbecddf-52d2-4037-bbf8-89955e87603e
+
+## How it works
 
 Engram uses every kind of memory where it fits, and one retrieval pipeline ranks them together.
 

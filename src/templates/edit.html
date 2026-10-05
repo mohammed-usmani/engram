@@ -131,11 +131,13 @@ document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.
 async function upload(file) {
   const fd = new FormData(); fd.append('file', file);
   Engram.toast('Uploading ' + file.name + '…');
-  const r = await fetch('/api/admin/{{ doc.slug }}/attachments', { method: 'POST', body: fd, headers: { Accept: 'application/json' } });
+  let r;
+  try { r = await fetch('/api/admin/{{ doc.slug }}/attachments', { method: 'POST', body: fd, headers: { Accept: 'application/json' } }); }
+  catch (_) { Engram.toast('Lost the connection to Engram during the upload. Reload to see whether the file was attached.', 'error'); return; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { Engram.toast(j.detail || ('Upload failed: ' + r.status), 'error'); return; }
-  Engram.toast(`${j.filename}: ${j.extraction} (${j.text_chars.toLocaleString()} characters)`);
-  setTimeout(() => location.reload(), 900);
+  Engram.toastAfterReload(`${j.filename}: ${j.extraction} (${j.text_chars.toLocaleString()} characters)`);
+  location.reload();
 }
 const drop = document.getElementById('drop');
 document.getElementById('file-input').addEventListener('change', (e) => e.target.files[0] && upload(e.target.files[0]));

@@ -25,7 +25,17 @@
       opts.headers['Content-Type'] = 'application/json';
       opts.body = JSON.stringify(body);
     }
-    const r = await fetch(url, opts);
+    let r;
+    try {
+      r = await fetch(url, opts);
+    } catch (_) {
+      // no HTTP answer at all: the server restarted or the network dropped mid-request,
+      // so we can't know whether the change was made. Say exactly that.
+      const err = new Error('Lost the connection to Engram before it answered, so this may or may not have been saved. '
+        + 'Reload the page to see the current state, then try again if needed.');
+      err.network = true;
+      throw err;
+    }
     const text = await r.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
@@ -137,5 +147,10 @@
     }
   });
 
-  window.Engram = { api, toast, collect };
+  // For custom scripts that reload right after success: the message shows on the reloaded page.
+  function toastAfterReload(msg) {
+    try { sessionStorage.setItem('engram-toast', msg); } catch (_) { toast(msg); }
+  }
+
+  window.Engram = { api, toast, toastAfterReload, collect };
 })();

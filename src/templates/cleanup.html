@@ -164,7 +164,7 @@ kindsForm?.addEventListener('submit', async (e) => {
   btn.disabled = true;
   try {
     const r = await Engram.api('POST', '/api/cleanup/kinds', { map: Engram.collect(kindsForm) });
-    Engram.toast(`Moved ${r.moved} topics, merged ${r.merged}`);
+    Engram.toastAfterReload(`Relabeled ${r.moved} topics, merged ${r.merged}`);
     location.reload();
   } catch (err) { Engram.toast(err.message, 'error'); btn.disabled = false; }
 });

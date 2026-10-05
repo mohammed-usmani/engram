@@ -60,6 +60,9 @@ Momentum is good; DSA rounds go well, system design is the recurring weak spot.
 
 ## How it works
 
+## See it in two minutes
+https://github.com/user-attachments/assets/efbecddf-52d2-4037-bbf8-89955e87603e
+
 Engram uses every kind of memory where it fits, and one retrieval pipeline ranks them together.
 
 | Memory type | Lives in | Example |

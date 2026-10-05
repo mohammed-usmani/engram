@@ -16,6 +16,11 @@
   <img alt="Postgres + pgvector" src="https://img.shields.io/badge/Postgres-pgvector-4338CA">
 </p>
 
+<p align="center">
+  <img src="docs/recall.gif" width="720" alt="recall works out which entities a request is about: name match, embeddings and an LLM planner, then one hop through the graph"><br>
+  <sub>How <code>recall</code> works out what a request is about, before it searches anything.</sub>
+</p>
+
 ---
 
 Every assistant starts from zero. Tell Claude you're job hunting, and ChatGPT still doesn't know.
@@ -84,7 +89,7 @@ flowchart LR
     E & F --> Z["consolidate (sleep pass)<br/>digests · reflections · profile"]
     A -- "recall(situation)" --> P["plan<br/>entities · weights"]
     P --> CH["channels: profile · session · aggregates ·<br/>episodes · facts · procedures · lessons · docs"]
-    CH --> K["rank: RRF × importance × recency × confidence"]
+    CH --> K["rank: RRF × kind weight × importance ×<br/>recency × confidence × entity boost"]
     K --> B["token-budgeted brief"] --> A
 ```
 
@@ -94,7 +99,8 @@ splits multi-company career events so counts stay right, de-duplicates events th
 twice, and reconciles new facts against old ones (a changed preference *supersedes* the old one —
 hidden from recall, kept in history).
 
-**Read path.** `recall` matches entities (aliases, embeddings, one hop of co-occurrence), runs
+**Read path.** `recall` matches entities (names and aliases, embeddings, an LLM planner unless `fast`, then one
+hop of co-occurrence), runs
 the channels, fuses them with reciprocal-rank fusion, applies importance, recency half-lives and
 confidence, and packs a sectioned brief under your token budget. `fast=true` uses no LLM at all,
 and recall keeps working (profile, counts, full-text) even if the embedding model is down.
@@ -136,7 +142,8 @@ Try it:
 
 ```bash
 curl -X POST localhost:8001/api/memory/remember -H 'Content-Type: application/json' \
-  -d '{"text": "Applied to Zomato and Swiggy for SDE-2 roles last Monday", "agent": "curl"}'
+  -d "{\"text\": \"Applied to Zomato and Swiggy for SDE-2 roles today\", \"agent\": \"curl\",
+       \"occurred_at\": \"$(date +%Y-%m-%dT%H:%M:%S%z)\"}"
 # a few seconds later
 curl -X POST localhost:8001/api/memory/recall -H 'Content-Type: application/json' \
   -d '{"situation": "how is my job search going?", "fast": true}'

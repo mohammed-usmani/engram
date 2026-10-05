@@ -34,6 +34,9 @@ mcp = FastMCP(
         "also needs `occurred_at`, the real date and time the event happened."
     ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    # Stateless: each request stands alone. ChatGPT's connector sometimes drops the
+    # mcp-session-id header between calls ("Missing session ID" -> 400 -> 'connection failed').
+    stateless_http=True,
 )
 
 _STOPWORDS = {

@@ -60,3 +60,14 @@ async def test_mcp_exposes_memory_tools():
 async def test_admin_shortcut_redirects(client):
     r = await client.get("/admin", follow_redirects=False)
     assert r.status_code in (302, 307) and r.headers["location"] == "/api/admin"
+
+
+async def test_mcp_tool_call_without_session_id(client):
+    """ChatGPT's connector sometimes sends a tool call without the MCP session header; it must still work."""
+    from src.mcp_server import mcp
+    async with mcp.session_manager.run():
+        r = await client.post("/mcp", headers={"Accept": "application/json, text/event-stream"},
+                              json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                    "params": {"name": "list_document_types", "arguments": {}}})
+    assert r.status_code == 200, r.text
+    assert "resume" in r.text

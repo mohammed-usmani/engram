@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 from typing import Any
@@ -60,13 +61,58 @@ def _doc_full(d: ContextDocument) -> dict[str, Any]:
     }
 
 
+class ToolInputError(Exception):
+    """A mistake in the caller's arguments. The payload tells the agent exactly what was wrong,
+    how to fix it, and the rules/valid values it needs to get it right on the next call."""
+
+    def __init__(self, error: str, fix: str, **context):
+        super().__init__(error)
+        self.payload = {"error": error, "fix": fix, **context}
+
+
+VALID_TYPES = [t.value for t in DocType]
+TYPE_RULE = ("A document's type comes from the `type` argument. If you omit `type` when creating a NEW "
+             "document, it is taken from the slug prefix (the part before '/'), so 'project/x' becomes a "
+             "project. When you pass `type`, the slug prefix does not have to match it. Existing documents "
+             "keep their type unless you pass `type`.")
+SLUG_RULE = "Slugs look like '<type>/<name>', lowercase with hyphens, e.g. 'project/voice-agent', 'skill/python'."
+ITEM_ID_RULE = ("Item ids come from recall(): 'e:<number>' event, 'r:<number>' lesson, "
+                "'f:<uuid>' fact/preference/procedure, 'd:<slug>' document. Copy them exactly.")
+
+
 async def _with_session(fn):
     try:
         async with AsyncSessionLocal() as session:
             return await fn(session)
+    except ToolInputError as e:
+        return e.payload
     except Exception as e:
         log.exception("tool failure")
-        return {"error": str(e)}
+        return {"error": f"internal error in Engram ({type(e).__name__}: {e})",
+                "fix": "This is a server-side bug, not your input. Retrying with the same arguments will fail "
+                       "the same way; tell the user Engram needs fixing (details are in its server log)."}
+
+
+def _doc_type(value: str, *, from_slug: str | None = None) -> DocType:
+    try:
+        return DocType(value)
+    except ValueError:
+        where = f"taken from the slug prefix of '{from_slug}'" if from_slug else "passed as `type`"
+        fix = ("Pass `type` explicitly with one of valid_types (you can keep this slug)" if from_slug
+               else "Pass one of valid_types exactly as written (lowercase, singular)")
+        raise ToolInputError(f"'{value}' is not a document type ({where}).", fix,
+                             valid_types=VALID_TYPES, how_it_works=TYPE_RULE) from None
+
+
+async def _find_doc(session: AsyncSession, slug: str) -> ContextDocument:
+    doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+    if doc is None:
+        slugs = list((await session.execute(select(ContextDocument.slug))).scalars())
+        close = difflib.get_close_matches(slug, slugs, n=5, cutoff=0.5)
+        raise ToolInputError(f"No document with slug '{slug}'.",
+                             "Use an exact slug from did_you_mean, list_documents or search_context. " + SLUG_RULE,
+                             did_you_mean=close)
+    return doc
 
 
 @mcp.tool()
@@ -74,7 +120,8 @@ async def list_document_types() -> list[str]:
     """List the document types stored about the user: resume, project (detailed
     write-ups), skill, experience, education, achievement, certification, profile (the exact
     current text of each public profile: LinkedIn, Indeed, GitHub, Hashnode...). Call list_documents
-    with a type filter to see titles, then get_document(slug) for full content."""
+    with a type filter to see titles, then get_document(slug) for full content. These are the only
+    valid values for `type` anywhere (save_document, list_documents)."""
     return [t.value for t in DocType]
 
 
@@ -96,7 +143,7 @@ async def list_documents(type: str | None = None, tag: str | None = None) -> lis
     async def inner(session: AsyncSession):
         stmt = select(ContextDocument)
         if type:
-            stmt = stmt.where(ContextDocument.type == DocType(type))
+            stmt = stmt.where(ContextDocument.type == _doc_type(type))
         if tag:
             stmt = stmt.where(ContextDocument.tags.contains([tag.lower()]))
         stmt = stmt.order_by(ContextDocument.type, ContextDocument.title)
@@ -116,12 +163,9 @@ async def get_document(slug: str) -> dict:
     'experience/example-labs', 'education/bsc', 'resume/master_resume'.
 
     Returns: {slug, title, type, tags, content (full text), sections (parsed sections),
-    metadata (key-value attributes)}."""
+    metadata (key-value attributes)}. An unknown slug returns `error`, `fix` and `did_you_mean`."""
     async def inner(session: AsyncSession):
-        row = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
-        if row is None:
-            return {"error": f"document not found: {slug}"}
-        return _doc_full(row)
+        return _doc_full(await _find_doc(session, slug))
     return await _with_session(inner)
 
 
@@ -129,7 +173,9 @@ def _agent(agent: str | None) -> tuple[str, dict | None]:
     """Every write says who made it, so memory can be traced back to the assistant that wrote it."""
     who = (agent or "").strip().lower()
     if not who:
-        return "", {"error": "agent is required: say who you are, e.g. claude-code, chatgpt, gemini"}
+        raise ToolInputError("`agent` is required on every write and was empty.",
+                             "Pass who you are, e.g. 'chatgpt', 'claude-code', 'claude-web', 'gemini', 'codex'. "
+                             "It is stored as updated_by so the user can trace who wrote what.")
     return who[:64], None
 
 
@@ -153,9 +199,12 @@ async def save_document(slug: str, agent: str, content: str | None = None, title
     send back the full edited text. For a small change prefer edit_document. To only
     rename or retag an existing document, omit `content`.
 
-    New document: slug is '<type>/<name>' (e.g. 'project/voiceagent'); title is required,
-    type defaults to the slug's prefix. Existing document: title, type and tags are kept
-    unless you pass them. Types: see list_document_types.
+    New document: slug is '<type>/<name>' (e.g. 'project/voiceagent'); `title` and `content` are
+    required. HOW THE TYPE IS CHOSEN: `type` if you pass it; otherwise the slug prefix (before '/').
+    Valid types: resume, project, skill, experience, education, achievement, certification, profile.
+    If your slug prefix is not one of these (e.g. 'interview/...'), pass `type` explicitly — the slug
+    can keep its prefix. Existing document: title, type and tags are kept unless you pass them.
+    On any mistake the reply has `error` (what was wrong) and `fix` (what to send instead).
     `agent` (required): who you are, e.g. claude-code, chatgpt, gemini; stored as updated_by."""
     async def inner(session: AsyncSession):
         who, err = _agent(agent)
@@ -163,15 +212,23 @@ async def save_document(slug: str, agent: str, content: str | None = None, title
             return err
         doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
         if doc is None:
-            if not title or content is None:
-                return {"error": "title and content are required for a new document"}
-            doc = ContextDocument(slug=slug, title=title, type=DocType(type or slug.split("/")[0]),
+            if "/" not in (slug or "") or slug.startswith("/") or slug.endswith("/"):
+                raise ToolInputError(f"Slug '{slug}' is not in '<type>/<name>' form.", SLUG_RULE,
+                                     how_it_works=TYPE_RULE)
+            missing = [n for n, v in (("title", title), ("content", content)) if not v]
+            if missing:
+                raise ToolInputError(
+                    f"No document '{slug}' exists, so this call creates one, and that needs: {', '.join(missing)}.",
+                    "Pass the missing field(s). If you meant to change an existing document, use its exact slug "
+                    "(see list_documents) — then title/type/tags are kept unless you pass them.")
+            doc_type = _doc_type(type) if type else _doc_type(slug.split("/")[0], from_slug=slug)
+            doc = ContextDocument(slug=slug, title=title, type=doc_type,
                                   tags=[], content="", sections={}, doc_metadata={})
             session.add(doc)
         if title:
             doc.title = title
         if type:
-            doc.type = DocType(type)
+            doc.type = _doc_type(type)
         if tags is not None:
             doc.tags = [t.strip().lower() for t in tags if t.strip()]
         if content is not None:
@@ -190,12 +247,17 @@ async def edit_document(slug: str, old_text: str, new_text: str, agent: str) -> 
         who, err = _agent(agent)
         if err:
             return err
-        doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
-        if doc is None:
-            return {"error": f"document not found: {slug}"}
-        count = doc.content.count(old_text) if old_text else 0
-        if count != 1:
-            return {"error": f"old_text found {count} times in {slug}; it must match exactly once"}
+        doc = await _find_doc(session, slug)
+        if not old_text:
+            raise ToolInputError("`old_text` is empty.", "Pass the exact text to replace, copied from get_document.")
+        count = doc.content.count(old_text)
+        if count == 0:
+            raise ToolInputError(f"`old_text` was found 0 times in '{slug}'; it must match exactly once.",
+                                 "Call get_document and copy old_text exactly (same spaces, line breaks, "
+                                 "punctuation). For a large rewrite use save_document with the full text.")
+        if count > 1:
+            raise ToolInputError(f"`old_text` was found {count} times in '{slug}'; it must match exactly once.",
+                                 "Include more surrounding text in old_text so it matches only one place.")
         doc.content = doc.content.replace(old_text, new_text)
         return await _save(session, doc, who)
     return await _with_session(inner)
@@ -209,9 +271,7 @@ async def delete_document(slug: str, agent: str) -> dict:
         who, err = _agent(agent)
         if err:
             return err
-        doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
-        if doc is None:
-            return {"error": f"document not found: {slug}"}
+        doc = await _find_doc(session, slug)
         await session.delete(doc)
         await session.commit()
         log.info("document %s deleted by %s", slug, who)
@@ -230,6 +290,8 @@ async def search_context(query: str, limit: int = 10) -> list[dict] | dict:
               search_context('voice AI') → voice-related projects/skills
               search_context('microservices')"""
     async def inner(session: AsyncSession):
+        if not (query or "").strip():
+            raise ToolInputError("`query` is empty.", "Pass keywords to search for, e.g. 'Redfox interview' or 'PostgreSQL'.")
         tsq = func.plainto_tsquery("english", query)
         stmt = (
             select(
@@ -373,7 +435,9 @@ async def get_chat_session(session_id: int) -> dict:
             select(ChatSession).where(ChatSession.id == session_id)
         )).scalar_one_or_none()
         if cs is None:
-            return {"error": f"session not found: {session_id}"}
+            raise ToolInputError(f"No chat session {session_id}.",
+                                 "Use an id from list_chat_sessions. Note: these are Engram's built-in chat only; "
+                                 "conversations from other assistants are in recall()/documents, not here.")
         msgs = (await session.execute(
             select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.id)
         )).scalars().all()
@@ -408,6 +472,11 @@ async def delete_memory(memory_id: int) -> dict:
 
 # ------------------------------------------------------------------ agentic memory
 
+def _check_item_id(item_id: str) -> None:
+    prefix, _, key = (item_id or "").partition(":")
+    if prefix not in ("e", "r", "f", "d") or not key or (prefix in ("e", "r") and not key.isdigit()):
+        raise ToolInputError(f"'{item_id}' is not a memory item id.", ITEM_ID_RULE)
+
 @mcp.tool()
 async def recall(situation: str, session_id: str | None = None, budget_tokens: int = 1500, fast: bool = False) -> dict:
     """Get what you should know about the user for the current situation. CALL THIS FIRST whenever
@@ -417,6 +486,8 @@ async def recall(situation: str, session_id: str | None = None, budget_tokens: i
     job applications, since when, outcomes), lessons learned, preferences, how they do things, and
     relevant documents. Item ids like [e:12] / [f:...] / [r:3] can be passed to expand()."""
     async def inner(session):
+        if not (situation or "").strip():
+            raise ToolInputError("`situation` is empty.", "Pass what the user said or is doing, in their words.")
         return await _recall(session, situation, budget_tokens, session_id, fast)
     return await _with_session(inner)
 
@@ -437,10 +508,16 @@ async def remember(text: str, agent: str, occurred_at: str, session_id: str | No
         who, err = _agent(agent)
         if err:
             return err
+        if not (text or "").strip():
+            raise ToolInputError("`text` is empty.", "Pass what happened or what you learned, in plain language.")
         try:
             when = datetime.fromisoformat(occurred_at)
         except (TypeError, ValueError):
-            return {"error": "occurred_at must be an ISO 8601 date/time, e.g. 2026-09-29T18:00:00+05:30"}
+            raise ToolInputError(
+                f"`occurred_at` '{occurred_at}' is not an ISO 8601 date/time.",
+                "Pass when the event HAPPENED (not when you save it), e.g. '2026-10-05T14:30:00+05:30'. "
+                "Resolve words like 'yesterday' to a real date yourself.",
+                how_it_works="A time without an offset is read in the user's timezone; a date alone means that day.") from None
         job_id, created = await _ingest.enqueue(session, text, who, session_id, when)
         return {"job_id": job_id, "queued": created}
     return await _with_session(inner)
@@ -451,6 +528,10 @@ async def note(session_id: str, key: str, value: str) -> dict:
     """Short-term memory for the CURRENT task only (expires in 7 days): constraints like
     deadline=Friday, format=PDF, audience=CTO. recall(session_id=...) returns them."""
     async def inner(session):
+        empty = [n for n, v in (("session_id", session_id), ("key", key), ("value", value)) if not (v or "").strip()]
+        if empty:
+            raise ToolInputError(f"Empty: {', '.join(empty)}.",
+                                 "note needs your current session id, a short key (e.g. 'deadline') and its value.")
         await _ingest.note(session, session_id, key, value)
         return {"ok": True}
     return await _with_session(inner)
@@ -465,6 +546,9 @@ async def teach(name: str, steps: list[str], agent: str, entities: list[str] | N
         who, err = _agent(agent)
         if err:
             return err
+        if not (name or "").strip() or not [x for x in (steps or []) if str(x).strip()]:
+            raise ToolInputError("teach needs a `name` and at least one non-empty step in `steps`.",
+                                 "e.g. name='deploy cityfix', steps=['run tests', 'build image', 'deploy', 'verify'].")
         return {"id": await _ingest.teach(session, name, steps, who, entities)}
     return await _with_session(inner)
 
@@ -472,9 +556,16 @@ async def teach(name: str, steps: list[str], agent: str, entities: list[str] | N
 @mcp.tool()
 async def expand(item_id: str) -> dict:
     """Full record for an item id from recall(): e:<n> episode, r:<n> lesson (with its evidence),
-    f:<uuid> fact/preference/procedure, d:<slug> document."""
+    f:<uuid> fact/preference/procedure, d:<slug> document. Copy the id exactly as recall() printed it,
+    including the prefix (e.g. 'e:860', not '860')."""
     async def inner(session):
-        return await _recall_mod.expand(session, item_id) or {"error": f"not found: {item_id}"}
+        _check_item_id(item_id)
+        item = await _recall_mod.expand(session, item_id)
+        if not item:
+            raise ToolInputError(f"No item '{item_id}'.",
+                                 "Call recall() or timeline() to get current ids (it may have been forgotten). "
+                                 + ITEM_ID_RULE)
+        return item
     return await _with_session(inner)
 
 
@@ -484,7 +575,18 @@ async def timeline(entity: str, since: str | None = None, limit: int = 100) -> l
     (slugs appear in recall() plans). `since` is an ISO date."""
     from datetime import datetime
     async def inner(session):
-        rows = await _recall_mod.timeline(session, entity, datetime.fromisoformat(since) if since else None, limit)
+        from src.memory.models import Entity
+        if ":" not in (entity or ""):
+            names = list((await session.execute(select(Entity.slug).where(Entity.slug.ilike(f"%{(entity or '').strip().lower()}%")).limit(8))).scalars())
+            raise ToolInputError(f"`entity` '{entity}' is not an entity slug in kind:name form.",
+                                 "Use kind:name, e.g. 'company:redfox', 'topic:job-search', 'project:voiceagent'. "
+                                 "recall() plans list the slugs it matched.", did_you_mean=names)
+        try:
+            since_dt = datetime.fromisoformat(since) if since else None
+        except ValueError:
+            raise ToolInputError(f"`since` '{since}' is not an ISO date.",
+                                 "Pass a date like '2026-10-01' (or a full ISO date/time), or omit it.") from None
+        rows = await _recall_mod.timeline(session, entity, since_dt, limit)
         return [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()} for r in rows]
     return await _with_session(inner)
 
@@ -492,9 +594,15 @@ async def timeline(entity: str, since: str | None = None, limit: int = 100) -> l
 @mcp.tool()
 async def forget(item_id: str) -> dict:
     """Permanently delete one memory item (e:/r:/f: id) — only when the user asks you to forget it
-    or it is wrong."""
+    or it is wrong. Documents (d:...) are deleted with delete_document instead."""
     async def inner(session):
-        return {"deleted": await _recall_mod.forget(session, item_id)}
+        _check_item_id(item_id)
+        if item_id.startswith("d:"):
+            raise ToolInputError("forget() removes memory items, not documents.",
+                                 "To delete a document use delete_document(slug=...). " + ITEM_ID_RULE)
+        if not await _recall_mod.forget(session, item_id):
+            raise ToolInputError(f"No item '{item_id}' to forget.", "Get current ids from recall(). " + ITEM_ID_RULE)
+        return {"deleted": item_id}
     return await _with_session(inner)
 
 

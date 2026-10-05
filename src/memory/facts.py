@@ -8,6 +8,7 @@ expiration_date (hidden from search, still returned by get) plus a
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -153,16 +154,43 @@ async def restore(fact_id: str) -> None:
     await m.update(fact_id, metadata={"superseded_by": None, "valid_to": None}, expiration_date=None)
 
 
-async def profile_rows(limit: int = 15) -> list[dict]:
-    """Pinned facts first, then the most important, newest first."""
+_ABOUT_USER = re.compile(r"\b(the user|user's|user|he|his|him)\b", re.I)
+# extracted facts often drop the subject ("Lives in Bangalore", "Prefers remote roles"): a sentence that opens
+# with a verb is about the user. ponytail: keyword list, swap for an extraction-time "about_user" flag if it misfires
+_SUBJECTLESS = re.compile(r"^(prefers|likes|loves|enjoys|dislikes|hates|avoids|wants|needs|values|lives|works|worked|"
+                          r"is|was|has|had|uses|owns|speaks|studies|studied|graduated|plans|builds|runs|writes|knows|"
+                          r"learned|learns|joined|left|expects|keeps|tends|aims|targets|intends)\b", re.I)
+PROFILE_FACT_MAX_CHARS = 300  # longer ones are project detail, not "who you are"; pin to force one in
+
+
+def _about_user(f: dict, names: list[str]) -> bool:
+    text = f["memory"]
+    return (f["metadata"].get("kind") == "preference" or bool(_ABOUT_USER.search(text)) or bool(_SUBJECTLESS.match(text))
+            or any(n and re.search(rf"\b{re.escape(n)}\b", text, re.I) for n in names))
+
+
+async def profile_rows(limit: int = 15, names: list[str] | None = None, max_tokens: int | None = None) -> list[dict]:
+    """Who the user is, for the top of every brief: pinned facts first, then facts and preferences about
+    the user (not project internals), most important and newest first, within `max_tokens`."""
     # all current facts: get_all's top_k caps the scan, and a pinned fact must never fall off it
     rows = await all_facts(kinds=["fact", "preference"], limit=5000)
-    rows.sort(key=lambda f: (bool(f["metadata"].get("pinned")), int(f["metadata"].get("importance") or 3),
-                             f.get("updated_at") or ""), reverse=True)
-    return rows[:limit]
+    names = [n for n in (names or []) if len(n) > 2]
+    rows = [f for f in rows if f["metadata"].get("pinned") or len(f["memory"]) <= PROFILE_FACT_MAX_CHARS]
+    rows.sort(key=lambda f: (bool(f["metadata"].get("pinned")), _about_user(f, names),
+                             int(f["metadata"].get("importance") or 3), f.get("updated_at") or ""), reverse=True)
+    out, used = [], 0
+    for f in rows:
+        cost = len(f["memory"]) // 4 + 3
+        if max_tokens and used + cost > max_tokens and out:
+            continue
+        out.append(f)
+        used += cost
+        if len(out) >= limit:
+            break
+    return out
 
 
-async def profile(limit: int = 15) -> str:
+async def profile(limit: int = 15, names: list[str] | None = None, max_tokens: int | None = None) -> str:
     """The user's most important current facts and preferences. Built live, so a forgotten or
     superseded fact disappears from every brief immediately."""
-    return "\n".join(f"- {f['memory']}" for f in await profile_rows(limit))
+    return "\n".join(f"- {f['memory']}" for f in await profile_rows(limit, names, max_tokens))

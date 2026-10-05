@@ -63,9 +63,32 @@ _plan_cache: dict[str, dict] = {}
 
 _PLAN_PROMPT = """The user said this to their AI assistant: "{situation}"
 Known memory entities: {known}
-Which entities are relevant, and how much should each memory kind matter here (0 = ignore, 1 = normal, 2 = crucial)?
+Which entities are relevant, and how much should each memory kind matter here (0.5 = less useful, 1 = normal, 2 = crucial)?
 Return JSON: {{"entities": [exact names from the known list], "weights": {{"episode": n, "fact": n, "preference": n,
 "procedure": n, "reflection": n, "document": n}}}}"""
+
+
+async def profile_params(session: AsyncSession, budget_tokens: int = 1500) -> tuple[list[str], int]:
+    """(the user's own names, pinned budget) — shared by recall and the Facts page's profile preview."""
+    cap = (settings_store.get("recall") or {}).get("pinned_cap")
+    pinned_budget = int(budget_tokens * cap) if cap else budget_tokens
+    me = (settings_store.get("recall") or {}).get("self_entity")
+    names: list[str] = []
+    if me:
+        row = (await session.execute(select(Entity.name, Entity.aliases).where(Entity.slug == me))).first()
+        names = [row[0], *(row[1] or [])] if row else []
+    return names, pinned_budget
+
+
+def _sane_weights(raw) -> dict:
+    """The planner only nudges ranking. It can't switch a kind off: a weight of 0 zeroes every score of that
+    kind (seen: all zeros, so the brief got no memories at all). Clamp to 0.3–2; ignore an answer with no signal."""
+    if not isinstance(raw, dict):
+        return {}
+    w = {k: float(v) for k, v in raw.items() if k in DEFAULT_WEIGHTS and isinstance(v, (int, float))}
+    if not w or max(w.values()) <= 0:
+        return {}
+    return {k: min(2.0, max(0.3, v)) for k, v in w.items()}
 
 
 async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: bool) -> dict:
@@ -84,8 +107,7 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
             try:
                 p = await complete_json(_PLAN_PROMPT.format(situation=situation, known=", ".join(known) or "none"), task="plan")
                 _plan_cache[key] = {"entities": [known[n] for n in p.get("entities", []) if n in known],
-                                    "weights": {k: float(v) for k, v in (p.get("weights") or {}).items()
-                                                if k in DEFAULT_WEIGHTS and isinstance(v, (int, float))}}
+                                    "weights": _sane_weights(p.get("weights"))}
             except Exception as e:  # planner is an optimisation; the fast plan still works
                 log.info("planner skipped: %s", e)
                 _plan_cache[key] = {"entities": [], "weights": {}}
@@ -242,8 +264,10 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
 
     # pinned: profile, session state, per-entity digest + aggregates
     pinned: list[str] = []
+    me_names, pinned_budget = await profile_params(session, budget_tokens)
     try:
-        live = await facts.profile()
+        # the profile gets at most half the pinned space, so dates and topic summaries always fit too
+        live = await facts.profile(names=me_names, max_tokens=pinned_budget // 2)
     except Exception as e:  # fact store down: fall back to the last snapshot from the sleep pass
         log.warning("live profile unavailable: %s", e)
         live = ""
@@ -283,8 +307,6 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
 
     # pack: pinned first, up to the pinned cap (Settings: room is left for ranked memories),
     # then best score per token
-    cap = (settings_store.get("recall") or {}).get("pinned_cap")
-    pinned_budget = int(budget_tokens * cap) if cap else budget_tokens
     used = 0
     kept_pinned = []
     sections = []

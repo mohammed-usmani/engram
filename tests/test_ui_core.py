@@ -98,3 +98,33 @@ async def test_recall_inspector_explains_and_respects_settings(client, engine, m
     assert x["explain"]["pinned_budget"] == 240
     assert sum(s["tokens"] for s in x["explain"]["sections"] if s["pinned"]) <= 240
     assert all({"score", "rrf", "recency", "in_brief"} <= set(c) for c in x["explain"]["candidates"])
+
+
+def test_planner_cannot_zero_out_recall():
+    from src.memory.recall import _sane_weights
+    assert _sane_weights({"episode": 0, "fact": 0, "reflection": 0}) == {}          # no signal: keep defaults
+    assert _sane_weights({"episode": 0, "fact": 2.5, "x": 1}) == {"episode": 0.3, "fact": 2.0}
+    assert _sane_weights("nonsense") == {}
+
+
+async def test_profile_prefers_the_user_and_fits_its_budget(mem0_store):
+    from src.memory import facts
+    await facts.add_fact("Engram uses RRF_K = 60 and a 30-day half-life for episodes", kind="fact", entities=[], importance=5)
+    await facts.add_fact("The user prefers remote roles", kind="preference", entities=[], importance=3)
+    await facts.add_fact("Alex lives in Lisbon", kind="fact", entities=[], importance=4)
+    await facts.add_fact("x " * 400, kind="fact", entities=[], importance=5)   # too long for a profile
+    rows = await facts.profile_rows(15, names=["Alex"], max_tokens=30)
+    texts = [r["memory"] for r in rows]
+    assert texts[0] in ("Alex lives in Lisbon", "The user prefers remote roles")
+    assert not any(t.startswith("x x") for t in texts)
+    assert sum(len(t) // 4 + 3 for t in texts) <= 30 or len(texts) == 1
+
+
+async def test_combine_refuses_a_giant_fact(client, mem0_store):
+    from src.memory import facts
+    a = await facts.add_fact("Works at Acme", kind="fact", entities=[])
+    b = await facts.add_fact("Builds AI agents at Acme", kind="fact", entities=[])
+    r = await client.post("/api/facts/combine", headers=LOCAL, json={"ids": [a, b], "text": "Works at Acme. " * 30})
+    assert r.status_code == 422 and "one short sentence" in r.json()["detail"]
+    r = await client.post("/api/facts/combine", headers=LOCAL, json={"ids": [a, b], "text": "Builds AI agents at Acme"})
+    assert r.status_code == 200, r.text

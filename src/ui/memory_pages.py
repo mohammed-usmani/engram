@@ -273,7 +273,9 @@ async def facts_page(request: Request, kind: str = "fact", q: str = "", replaced
         where payload->>'superseded_by' is null group by 1"""))).all())
     n_replaced = await session.scalar(sql(f"""select count(*) from {t} where payload->>'superseded_by' is not null
         and coalesce(payload->>'kind', 'fact') = :kind"""), {"kind": kind})
-    prof = await facts.profile_rows(15)
+    from src.memory.recall import profile_params
+    names, pinned_budget = await profile_params(session)
+    prof = await facts.profile_rows(15, names, pinned_budget // 2)
     names = await _names(session, [s for f in prof for s in f["metadata"].get("entities") or []])
     return await render(
         request, "facts.html", session, "facts", **page, kind=kind, q=q, kinds=facts.KINDS, counts=counts,
@@ -301,7 +303,7 @@ class PinIn(BaseModel):
 
 class CombineIn(BaseModel):
     ids: list[str] = Field(..., min_length=2)
-    text: str = Field(..., min_length=3, max_length=2000)
+    text: str = Field(..., min_length=3, max_length=5000)
     importance: int | None = Field(None, ge=1, le=5)
 
 
@@ -362,6 +364,10 @@ async def combine_facts(body: CombineIn):
     old = [await _fact_or_404(i) for i in dict.fromkeys(body.ids)]
     if len(old) < 2:
         raise HTTPException(400, "Pick at least two facts to combine.")
+    if len(body.text.strip()) > facts.PROFILE_FACT_MAX_CHARS:
+        raise HTTPException(422, f"The combined fact is {len(body.text.strip())} characters. Write one short sentence "
+                                 f"(under {facts.PROFILE_FACT_MAX_CHARS}) that says what the ticked facts have in common; "
+                                 "a long one would crowd out everything else in each brief.")
     metas = [f["metadata"] for f in old]
     kind = Counter(m.get("kind") or "fact" for m in metas).most_common(1)[0][0]
     entities = sorted({s for m in metas for s in m.get("entities") or []})

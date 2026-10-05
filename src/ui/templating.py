@@ -47,6 +47,14 @@ def _time(dt: datetime | None) -> str:
     return dt.astimezone(USER_TZ).strftime("%H:%M") if dt else ""
 
 
+def _asset_version() -> str:
+    """Changes whenever a static file changes, so browsers never pair a new page with an old cached script."""
+    static = Path(__file__).resolve().parent.parent / "static"
+    return str(int(max((f.stat().st_mtime for f in static.iterdir() if f.is_file()), default=0)))
+
+
+templates.env.globals["asset_v"] = _asset_version()
+
 templates.env.filters.update(local_date=local_date, num=_num, ago=_ago, day=_day, hm=_time,
                              local_time=lambda dt: dt.astimezone(USER_TZ).strftime("%Y-%m-%d %H:%M"),
                              longdate=lambda dt: dt.astimezone(USER_TZ).strftime("%A, %-d %B %Y"),

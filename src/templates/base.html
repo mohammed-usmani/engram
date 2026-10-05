@@ -6,10 +6,10 @@
   <title>{% block title %}Engram{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,600&display=swap" rel="stylesheet">
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/engram.css">
+  <link rel="icon" href="/static/favicon.svg?v={{ asset_v }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/engram.css?v={{ asset_v }}">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script src="/static/engram.js"></script>
+  <script src="/static/engram.js?v={{ asset_v }}"></script>
   {% block head %}{% endblock %}
 </head>
 <body>

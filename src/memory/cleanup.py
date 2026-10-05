@@ -148,8 +148,10 @@ async def dupe_groups(session: AsyncSession) -> list[dict]:
 
 
 async def kinds(session: AsyncSession) -> list[dict]:
-    rows = (await session.execute(sql("select kind, count(*) n from entities group by kind order by n desc, kind"))).all()
-    return [{"kind": k, "n": n, "canon": k in CANON_KINDS, "to": suggest_kind(k)} for k, n in rows]
+    rows = (await session.execute(sql("""select kind, count(*) n, (array_agg(name order by name))[1:4] examples
+        from entities group by kind order by n desc, kind"""))).all()
+    return [{"kind": k, "n": n, "canon": k in CANON_KINDS, "to": suggest_kind(k), "examples": ex or []}
+            for k, n, ex in rows]
 
 
 async def once(session: AsyncSession, data=None) -> list[dict]:

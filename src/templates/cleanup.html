@@ -28,7 +28,7 @@
   <nav class="seg tabs" aria-label="Cleanup sections">
     <a href="#merge">Same thing, two names <span class="n">{{ merges|length }}</span></a>
     <a href="#dupes">Duplicate events <span class="n">{{ dupes|length }} {{ "pair" if dupes|length == 1 else "groups" if dupes|length else "" }}</span></a>
-    <a href="#kinds">Topic kinds <span class="n">{{ kinds|length }} → {{ canon|length }}</span></a>
+    <a href="#kinds">Topic labels <span class="n">{{ odd_kinds|length }} to fix</span></a>
     <a href="#once">Mentioned once <span class="n">{{ once|length }}</span></a>
   </nav>
 
@@ -100,23 +100,32 @@
   <div class="row-wrap">
     {# ------------------------------------------------ kinds #}
     <section id="kinds" class="card stack grow-1" aria-labelledby="h-kinds">
-      <h2 id="h-kinds">Topic kinds: {{ kinds|length }} in use, {{ canon|length }} expected</h2>
-      <div class="small muted">The extractor should only use {{ canon | join(", ") }}. Map the rest once, and new ones are folded in automatically. A topic whose new name already exists is merged into it.</div>
+      <h2 id="h-kinds">Topic labels{% if odd_kinds %}: {{ odd_kinds|length }} made-up ones to fix{% endif %}</h2>
+      <div class="small muted stack" style="gap:6px">
+        <p>Every topic carries a label: Redfox is a <i>company</i>, Job search a <i>topic</i>, voiceAgent a <i>project</i>.
+          Engram is meant to use only these {{ canon|length }}: {{ canon | join(", ") }}. When the AI that reads your conversations
+          invents another label, the same thing can end up as two topics (“VoiceDiary” the <i>app</i> and “VoiceDiary” the <i>project</i>),
+          and its events get split between them.</p>
+        <p>Each row below is a made-up label and the real one to use instead. Change any dropdown you disagree with, then apply.
+          Topics are relabeled; if that leaves two with the same name and label, they're merged and every event is kept.
+          New topics with these labels are relabeled automatically from now on. Nothing is deleted.</p>
+      </div>
       {% if odd_kinds %}
       <form id="kinds-form" class="stack" style="gap:0">
         {% for k in odd_kinds %}
         <div class="line-row">
-          <span class="mono" style="flex:1">{{ k.kind }} <span class="muted">· {{ k.n }}</span></span>
-          <span aria-hidden="true" class="muted">→</span>
+          <span style="flex:1;min-width:0"><span class="mono">{{ k.kind }}</span> <span class="muted">· {{ k.n }} topic{{ "" if k.n == 1 else "s" }}</span>
+            {% if k.examples %}<span class="tiny muted" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">e.g. {{ k.examples | join(", ") }}</span>{% endif %}</span>
+          <span class="small muted">becomes</span>
           <select class="select" name="{{ k.kind }}" aria-label="Map kind {{ k.kind }}">
             {% for c in canon %}<option value="{{ c }}" {{ "selected" if c == k.to }}>{{ c }}</option>{% endfor %}
           </select>
         </div>
         {% endfor %}
-        <button class="btn primary" type="submit" style="align-self:flex-start;margin-top:10px">Apply mapping</button>
+        <button class="btn primary" type="submit" style="align-self:flex-start;margin-top:10px">Relabel {{ odd_kinds|map(attribute="n")|sum }} topics</button>
       </form>
       {% else %}
-      <div class="empty">Every topic uses one of the {{ canon|length }} kinds.</div>
+      <div class="empty">Every topic uses one of the {{ canon|length }} real labels.</div>
       {% endif %}
     </section>
 

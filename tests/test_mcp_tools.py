@@ -37,7 +37,8 @@ def _call(tool_obj):
 async def test_list_types(mcp_db):
     from src.mcp_server import list_document_types
     out = await _call(list_document_types)()
-    assert "skill" in out and "resume" in out
+    names = {t["name"] for t in out}
+    assert {"skill", "resume", "interview", "health"} <= names
 
 
 async def test_list_documents(mcp_db):
@@ -92,7 +93,8 @@ async def test_save_edit_delete_document(mcp_db, monkeypatch):
 
     out = await _call(save_document)("project/voiceagent", "Claude-Code", "Stack: Python\n\nSummary:\nPhone agent.",
                                      title="voiceAgent", tags=["Voice"])
-    assert out == {"slug": "project/voiceagent", "title": "voiceAgent", "type": "project", "tags": ["voice"]}
+    assert out == {"slug": "project/voiceagent", "title": "voiceAgent", "type": "project", "tags": ["voice"],
+                   "privacy": "normal"}
     doc = await _call(get_document)("project/voiceagent")
     assert doc["metadata"]["Stack"] == "Python" and doc["sections"]["Summary"] == "Phone agent."
     assert doc["updated_by"] == "claude-code"

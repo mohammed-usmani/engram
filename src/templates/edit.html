@@ -62,12 +62,18 @@
   action="{{ '/api/admin/new' if is_new else '/api/admin/' + doc.slug }}"
   class="edit-form">
 
-  <label>Type
-    <select name="type" required>
-      {% for t in types %}
-        <option value="{{ t }}" {% if not is_new and doc.type.value == t %}selected{% endif %}>{{ t }}</option>
-      {% endfor %}
+  <label>Type <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(pick one, or type a new one and describe it below)</span>
+    <input type="text" name="type" list="doc-types" required value="{{ '' if is_new else doc.type }}" placeholder="e.g. note, health, project">
+    <datalist id="doc-types">{% for t in types %}<option value="{{ t }}">{% endfor %}</datalist>
+  </label>
+  <label>New type description <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(only when creating a new type)</span>
+    <input type="text" name="type_description" placeholder="e.g. Recipes I cook">
+  </label>
+  <label>Privacy
+    <select name="privacy">
+      {% for p in privacy_levels %}<option value="{{ p }}" {% if (is_new and p == 'normal') or (not is_new and doc.privacy == p) %}selected{% endif %}>{{ p }}</option>{% endfor %}
     </select>
+    <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">normal: used everywhere · private: never in automatic recall/search, only when asked for · local-only: private, and hidden from web assistants on the public link</span>
   </label>
 
   <label>Slug <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(leave blank on create to auto-generate)</span>

@@ -93,7 +93,7 @@
   {% for d in docs %}
     <tr>
       <td><a href="/api/admin/{{ d.slug }}">{{ d.title }}</a></td>
-      <td><span class="tag">{{ d.type.value }}</span></td>
+      <td><span class="tag">{{ d.type }}</span>{% if d.privacy != 'normal' %} <span class="tag" title="{{ 'Kept out of automatic recall and search' if d.privacy == 'private' else 'Private, and hidden from the public link' }}">🔒 {{ d.privacy }}</span>{% endif %}</td>
       <td style="white-space:nowrap;color:var(--text-muted)">{{ d.updated_at.strftime('%Y-%m-%d') }}</td>
       <td>{% for t in d.tags %}<span class="tag">{{ t }}</span> {% endfor %}</td>
       <td>{{ d.updated_at.strftime('%Y-%m-%d') }}</td>

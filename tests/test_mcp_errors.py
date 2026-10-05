@@ -12,10 +12,10 @@ def _is_input_error(out: dict) -> None:
 
 
 async def test_save_new_doc_with_slug_prefix_that_is_not_a_type(mcp_db):
-    out = await _call(srv.save_document)(slug="interview/redfox-2026-10-05", agent="claude-code",
-                                         title="Redfox screening", content="Summary:\nWent well.\n")
+    out = await _call(srv.save_document)(slug="meeting/standup-2026-10-05", agent="claude-code",
+                                         title="Standup", content="Summary:\nWent well.\n")
     _is_input_error(out)
-    assert "'interview'" in out["error"] and "slug" in out["error"].lower()
+    assert "'meeting'" in out["error"] and "slug" in out["error"].lower()
     assert "experience" in out["valid_types"]
     assert "type=" in out["fix"] or "`type`" in out["fix"]
     assert "slug prefix" in out["how_it_works"].lower()

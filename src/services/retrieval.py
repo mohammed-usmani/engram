@@ -9,6 +9,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import ContextDocument
+from src.privacy import automatic
 from src.services.ollama_client import embed
 
 log = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ async def retrieve(
             ContextDocument,
             (1 - ContextDocument.embedding.cosine_distance(query_embedding)).label("vec_score"),
         )
-        .where(ContextDocument.embedding.isnot(None))
+        .where(ContextDocument.embedding.isnot(None), automatic(ContextDocument.privacy))
         .order_by(ContextDocument.embedding.cosine_distance(query_embedding))
         .limit(limit * 3)
     )
@@ -76,7 +77,7 @@ async def retrieve(
                 ContextDocument,
                 func.ts_rank(ContextDocument.search_vector, tsq).label("fts_score"),
             )
-            .where(ContextDocument.search_vector.op("@@")(tsq))
+            .where(ContextDocument.search_vector.op("@@")(tsq), automatic(ContextDocument.privacy))
             .order_by(func.ts_rank(ContextDocument.search_vector, tsq).desc())
             .limit(limit * 3)
         )
@@ -113,7 +114,7 @@ async def retrieve(
             method = "fts"
 
         results.append(RetrievedDoc(
-            slug=doc.slug, title=doc.title, type=doc.type.value,
+            slug=doc.slug, title=doc.title, type=getattr(doc.type, 'value', doc.type),
             content=doc.content, score=combined, source_method=method,
         ))
 

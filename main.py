@@ -127,8 +127,9 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/api/types")
-async def types() -> list[str]:
-    return [t.value for t in DocType]
+async def types(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    from src.doc_types import list_types
+    return await list_types(session)
 
 
 # OAuth for MCP clients without a fixed header (only when PUBLIC_URL is set); before the mount.

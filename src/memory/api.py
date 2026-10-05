@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import PlainTextResponse, RedirectResponse
 
 from src.config import settings
+from src.privacy import REQUEST_IS_REMOTE
 from src.database import get_session
 from src.memory import ingest, recall as rc
 from src.memory.models import IngestJob
@@ -32,6 +33,13 @@ _LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 _OPEN_PATHS = ("/api/health", "/login", *oauth.OPEN_PATHS)
 
 
+def is_remote_request(headers: dict, client) -> bool:
+    """Anything except direct local use: loopback client, localhost Host, no proxy headers."""
+    host = headers.get(b"host", b"").decode().rsplit(":", 1)[0] if b"host" in headers else ""
+    local = bool(client) and client[0] in ("127.0.0.1", "::1") and host in _LOCAL_HOSTS
+    return not local or any(h in headers for h in _FORWARDED)
+
+
 def needs_token(path: str, headers: dict, client) -> bool:
     """Everything needs the token, except /api/health and direct local use.
 
@@ -40,9 +48,7 @@ def needs_token(path: str, headers: dict, client) -> bool:
     """
     if path in _OPEN_PATHS or path.startswith("/.well-known/"):
         return False
-    host = headers.get(b"host", b"").decode().rsplit(":", 1)[0] if b"host" in headers else ""
-    local = bool(client) and client[0] in ("127.0.0.1", "::1") and host in _LOCAL_HOSTS
-    return not local or any(h in headers for h in _FORWARDED)
+    return is_remote_request(headers, client)
 
 
 def cookie_token(headers: dict) -> str | None:
@@ -66,6 +72,9 @@ class AuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            # every request knows whether it came from this computer or through the public link / a proxy
+            REQUEST_IS_REMOTE.set(is_remote_request(dict(scope.get("headers") or []), scope.get("client")))
         if scope["type"] == "http" and settings.admin_token:
             headers = dict(scope.get("headers") or [])
             if needs_token(scope["path"], headers, scope.get("client")) and \

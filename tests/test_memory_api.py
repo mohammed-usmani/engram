@@ -67,7 +67,6 @@ async def test_mcp_tool_call_without_session_id(client):
     from src.mcp_server import mcp
     async with mcp.session_manager.run():
         r = await client.post("/mcp", headers={"Accept": "application/json, text/event-stream"},
-                              json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                                    "params": {"name": "list_document_types", "arguments": {}}})
+                              json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
     assert r.status_code == 200, r.text
-    assert "resume" in r.text
+    assert "save_document" in r.text

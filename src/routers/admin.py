@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.database import get_session
-from src.models import ContextDocument, DocType, Source
+from src.doc_types import resolve_type, type_names
+from src.models import ContextDocument, Source
+from src.privacy import PRIVACY_LEVELS, readable
+from src.tool_errors import ToolInputError
 import logging
 
 from src.seed.loader import run_seed
@@ -81,7 +84,8 @@ async def dump_all(
 
     rows = (
         await session.execute(
-            select(ContextDocument).order_by(ContextDocument.type, ContextDocument.title)
+            select(ContextDocument).where(readable(ContextDocument.privacy))
+            .order_by(ContextDocument.type, ContextDocument.title)
         )
     ).scalars().all()
 
@@ -90,7 +94,8 @@ async def dump_all(
             {
                 "slug": r.slug,
                 "title": r.title,
-                "type": r.type.value,
+                "type": r.type,
+                "privacy": r.privacy,
                 "tags": r.tags,
                 "source": r.source.value,
                 "content": r.content,
@@ -110,7 +115,7 @@ async def dump_all(
         f"\n_Total documents: {len(rows)}_\n",
     ]
     for r in rows:
-        parts.append(f"\n---\n\n## [{r.type.value}] {r.title}")
+        parts.append(f"\n---\n\n## [{r.type}] {r.title}")
         parts.append(f"\n**Slug:** `{r.slug}`  \n**Tags:** {', '.join(r.tags) or '—'}  \n**Source:** {r.source.value}")
         if r.doc_metadata:
             parts.append("\n**Metadata:**")
@@ -144,9 +149,9 @@ async def admin_index(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
-    stmt = select(ContextDocument)
+    stmt = select(ContextDocument).where(readable(ContextDocument.privacy))
     if type:
-        stmt = stmt.where(ContextDocument.type == DocType(type))
+        stmt = stmt.where(ContextDocument.type == type)
     if q:
         tsq = func.plainto_tsquery("english", q)
         stmt = stmt.where(ContextDocument.search_vector.op("@@")(tsq))
@@ -156,17 +161,18 @@ async def admin_index(
     docs = (await session.execute(stmt.limit(500))).scalars().all()
     return templates.TemplateResponse("list.html", {
         "request": request, "docs": docs,
-        "types": [t.value for t in DocType], "type": type, "q": q,
+        "types": await type_names(session), "type": type, "q": q,
         "import_summary": request.query_params.get("import"),
         "active_page": "documents",
     })
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def new_form(request: Request, _: None = Depends(_check_token)):
+async def new_form(request: Request, session: AsyncSession = Depends(get_session),
+                   _: None = Depends(_check_token)):
     return templates.TemplateResponse("edit.html", {
-        "request": request, "is_new": True, "doc": None,
-        "types": [t.value for t in DocType], "error": None,
+        "request": request, "is_new": True, "doc": None, "privacy_levels": PRIVACY_LEVELS,
+        "types": await type_names(session), "error": None,
         "active_page": "documents",
     })
 
@@ -179,19 +185,23 @@ async def new_submit(
     title: str = Form(...),
     tags: str = Form(""),
     content: str = Form(...),
+    type_description: str = Form(""),
+    privacy: str = Form("normal"),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
     try:
-        doc_type = DocType(type)
-    except Exception as e:
+        doc_type = await resolve_type(session, type.strip(), description=type_description)
+        if privacy not in PRIVACY_LEVELS:
+            raise ToolInputError(f"privacy must be one of {', '.join(PRIVACY_LEVELS)}", "")
+    except ToolInputError as e:
         return templates.TemplateResponse("edit.html", {
-            "request": request, "is_new": True, "doc": None,
-            "types": [t.value for t in DocType], "error": f"invalid input: {e}",
+            "request": request, "is_new": True, "doc": None, "privacy_levels": PRIVACY_LEVELS,
+            "types": await type_names(session), "error": f"{e.payload['error']} {e.payload['fix']}",
             "active_page": "documents",
         }, status_code=400)
 
-    chosen_slug = slug.strip() or f"{doc_type.value}/{_slugify(title)}"
+    chosen_slug = slug.strip() or f"{doc_type}/{_slugify(title)}"
     existing = (await session.execute(select(ContextDocument).where(ContextDocument.slug == chosen_slug))).scalar_one_or_none()
     if existing is not None:
         i = 2
@@ -201,7 +211,7 @@ async def new_submit(
 
     doc = ContextDocument(type=doc_type, slug=chosen_slug, title=title, tags=_parse_tags(tags),
                           content=content, sections={}, source=Source.MANUAL, doc_metadata={},
-                          updated_by="admin")
+                          updated_by="admin", privacy=privacy)
     await _refresh_derived(doc)
     session.add(doc)
     await session.commit()
@@ -214,7 +224,8 @@ async def delete_doc(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
-    doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+    doc = (await session.execute(select(ContextDocument).where(
+        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
     if doc is None:
         raise HTTPException(404, "not found")
     await session.delete(doc)
@@ -228,12 +239,13 @@ async def edit_form(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
-    doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+    doc = (await session.execute(select(ContextDocument).where(
+        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
     if doc is None:
         raise HTTPException(404, "not found")
     return templates.TemplateResponse("edit.html", {
-        "request": request, "is_new": False, "doc": doc,
-        "types": [t.value for t in DocType], "error": None,
+        "request": request, "is_new": False, "doc": doc, "privacy_levels": PRIVACY_LEVELS,
+        "types": await type_names(session), "error": None,
         "active_page": "documents",
     })
 
@@ -245,24 +257,31 @@ async def edit_submit(
     title: str = Form(...),
     tags: str = Form(""),
     content: str = Form(...),
+    type_description: str = Form(""),
+    privacy: str = Form(""),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
-    doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+    doc = (await session.execute(select(ContextDocument).where(
+        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
     if doc is None:
         raise HTTPException(404, "not found")
     try:
-        doc.type = DocType(type)
+        doc.type = await resolve_type(session, type.strip(), description=type_description)
+        if privacy:
+            if privacy not in PRIVACY_LEVELS:
+                raise ToolInputError(f"privacy must be one of {', '.join(PRIVACY_LEVELS)}", "")
+            doc.privacy = privacy
         doc.title = title
         doc.tags = _parse_tags(tags)
         doc.content = content
         doc.source = Source.MANUAL
         doc.updated_by = "admin"
         await _refresh_derived(doc)
-    except Exception as e:
+    except ToolInputError as e:
         return templates.TemplateResponse("edit.html", {
-            "request": request, "is_new": False, "doc": doc,
-            "types": [t.value for t in DocType], "error": f"invalid input: {e}",
+            "request": request, "is_new": False, "doc": doc, "privacy_levels": PRIVACY_LEVELS,
+            "types": await type_names(session), "error": f"{e.payload['error']} {e.payload['fix']}",
             "active_page": "documents",
         }, status_code=400)
     await session.commit()

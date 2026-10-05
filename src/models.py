@@ -13,6 +13,8 @@ from .database import Base
 
 
 class DocType(str, enum.Enum):
+    """The built-in career types. Documents can use any registered type (see DocumentType);
+    these constants remain for code that works with career documents (resume tailoring)."""
     RESUME = "resume"
     PROJECT = "project"
     SKILL = "skill"
@@ -32,11 +34,7 @@ class ContextDocument(Base):
     __tablename__ = "context_documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    type: Mapped[DocType] = mapped_column(
-        Enum(DocType, name="doc_type_enum", values_callable=lambda x: [e.value for e in x]),
-        index=True,
-        nullable=False,
-    )
+    type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)  # a DocumentType.name
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
@@ -52,6 +50,8 @@ class ContextDocument(Base):
         "metadata", JSONB, nullable=False, default=dict
     )
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)  # assistant or "admin"
+    privacy: Mapped[str] = mapped_column(String(16), nullable=False, default="normal",
+                                         server_default="normal")  # see src/privacy.py
     search_vector: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(768), nullable=True)
 
@@ -66,6 +66,39 @@ class ContextDocument(Base):
         Index("ix_context_documents_tags_gin", "tags", postgresql_using="gin"),
         Index("ix_context_documents_search_vector", "search_vector", postgresql_using="gin"),
     )
+
+
+class DocumentType(Base):
+    """Registry of document types: built-in ones plus any the user or an assistant creates."""
+    __tablename__ = "document_types"
+
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    builtin: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+BUILTIN_TYPES: dict[str, str] = {
+    "resume": "Resumes and CVs",
+    "project": "Projects you built: what, how, stack, decisions",
+    "skill": "Skills and how you've used them",
+    "experience": "Jobs and work experience",
+    "education": "Degrees, courses of study",
+    "achievement": "Awards, hackathons, recognition",
+    "certification": "Certificates",
+    "profile": "Exact current text of a public profile (LinkedIn, GitHub...)",
+    "interview": "Interview records and transcripts",
+    "note": "General notes",
+    "person": "People: who they are, how you know them, key dates",
+    "health": "Health records, prescriptions, test results",
+    "finance": "Money: accounts, policies, bills, investments",
+    "home": "Home and household: appliances, warranties, utilities",
+    "travel": "Trips, bookings, visas, travel documents",
+    "learning": "Courses, books and things you're learning",
+    "reference": "How-tos, configs and instructions to keep",
+}
 
 
 class ChatSession(Base):

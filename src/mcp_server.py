@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.database import AsyncSessionLocal
+from src.doc_types import TYPE_RULE, list_types, resolve_type, type_names
 from src.models import ContextDocument, DocType, Source, ChatSession, ChatMessage
+from src.privacy import PRIVACY_LEVELS, PRIVACY_RULE, automatic, is_remote, readable
+from src.tool_errors import ToolInputError
 from src.services.chat import handle_chat
 from src.services.memory import list_memories as _list_memories, delete_memory as _delete_memory
 
@@ -49,32 +52,22 @@ _STOPWORDS = {
 }
 
 
+def _t(d: ContextDocument) -> str:
+    return getattr(d.type, "value", d.type)
+
+
 def _doc_summary(d: ContextDocument) -> dict[str, Any]:
-    return {"slug": d.slug, "title": d.title, "type": d.type.value, "tags": d.tags}
+    return {"slug": d.slug, "title": d.title, "type": _t(d), "tags": d.tags, "privacy": d.privacy or "normal"}
 
 
 def _doc_full(d: ContextDocument) -> dict[str, Any]:
     return {
-        "slug": d.slug, "title": d.title, "type": d.type.value, "tags": d.tags,
+        "slug": d.slug, "title": d.title, "type": _t(d), "tags": d.tags, "privacy": d.privacy or "normal",
         "content": d.content, "sections": d.sections, "metadata": d.doc_metadata,
         "updated_by": d.updated_by, "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
 
 
-class ToolInputError(Exception):
-    """A mistake in the caller's arguments. The payload tells the agent exactly what was wrong,
-    how to fix it, and the rules/valid values it needs to get it right on the next call."""
-
-    def __init__(self, error: str, fix: str, **context):
-        super().__init__(error)
-        self.payload = {"error": error, "fix": fix, **context}
-
-
-VALID_TYPES = [t.value for t in DocType]
-TYPE_RULE = ("A document's type comes from the `type` argument. If you omit `type` when creating a NEW "
-             "document, it is taken from the slug prefix (the part before '/'), so 'project/x' becomes a "
-             "project. When you pass `type`, the slug prefix does not have to match it. Existing documents "
-             "keep their type unless you pass `type`.")
 SLUG_RULE = "Slugs look like '<type>/<name>', lowercase with hyphens, e.g. 'project/voice-agent', 'skill/python'."
 ITEM_ID_RULE = ("Item ids come from recall(): 'e:<number>' event, 'r:<number>' lesson, "
                 "'f:<uuid>' fact/preference/procedure, 'd:<slug>' document. Copy them exactly.")
@@ -93,21 +86,11 @@ async def _with_session(fn):
                        "the same way; tell the user Engram needs fixing (details are in its server log)."}
 
 
-def _doc_type(value: str, *, from_slug: str | None = None) -> DocType:
-    try:
-        return DocType(value)
-    except ValueError:
-        where = f"taken from the slug prefix of '{from_slug}'" if from_slug else "passed as `type`"
-        fix = ("Pass `type` explicitly with one of valid_types (you can keep this slug)" if from_slug
-               else "Pass one of valid_types exactly as written (lowercase, singular)")
-        raise ToolInputError(f"'{value}' is not a document type ({where}).", fix,
-                             valid_types=VALID_TYPES, how_it_works=TYPE_RULE) from None
-
-
 async def _find_doc(session: AsyncSession, slug: str) -> ContextDocument:
-    doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+    doc = (await session.execute(select(ContextDocument).where(
+        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
     if doc is None:
-        slugs = list((await session.execute(select(ContextDocument.slug))).scalars())
+        slugs = list((await session.execute(select(ContextDocument.slug).where(readable(ContextDocument.privacy)))).scalars())
         close = difflib.get_close_matches(slug, slugs, n=5, cutoff=0.5)
         raise ToolInputError(f"No document with slug '{slug}'.",
                              "Use an exact slug from did_you_mean, list_documents or search_context. " + SLUG_RULE,
@@ -116,18 +99,22 @@ async def _find_doc(session: AsyncSession, slug: str) -> ContextDocument:
 
 
 @mcp.tool()
-async def list_document_types() -> list[str]:
-    """List the document types stored about the user: resume, project (detailed
-    write-ups), skill, experience, education, achievement, certification, profile (the exact
-    current text of each public profile: LinkedIn, Indeed, GitHub, Hashnode...). Call list_documents
-    with a type filter to see titles, then get_document(slug) for full content. These are the only
-    valid values for `type` anywhere (save_document, list_documents)."""
-    return [t.value for t in DocType]
+async def list_document_types() -> list[dict] | dict:
+    """List the document types in use, each with a description and how many documents have it.
+    Built-in types cover career (resume, project, skill, experience, education, achievement,
+    certification, profile) and everyday life (interview, note, person, health, finance, home,
+    travel, learning, reference). Any of these is valid for `type`; to create a new type, pass
+    `type_description` to save_document. Then call list_documents(type=...) / get_document(slug)."""
+    async def inner(session: AsyncSession):
+        return await list_types(session)
+    return await _with_session(inner)
 
 
 @mcp.tool()
 async def list_documents(type: str | None = None, tag: str | None = None) -> list[dict] | dict:
-    """List all documents about the user (slim summaries — slug, title, type, tags).
+    """List all documents about the user (slim summaries — slug, title, type, tags, privacy).
+    Private documents are listed by title only in the sense that their content is never pushed into
+    recall/search; fetch one with get_document(slug) when the user asks for it.
 
     IMPORTANT: This returns only summaries. To get the FULL content of any document
     (including detailed project write-ups with tech stack, architecture, challenges,
@@ -141,9 +128,13 @@ async def list_documents(type: str | None = None, tag: str | None = None) -> lis
 
     Project documents are long and detailed; call get_document to retrieve one."""
     async def inner(session: AsyncSession):
-        stmt = select(ContextDocument)
+        stmt = select(ContextDocument).where(readable(ContextDocument.privacy))
         if type:
-            stmt = stmt.where(ContextDocument.type == _doc_type(type))
+            names = await type_names(session)
+            if type not in names:
+                raise ToolInputError(f"'{type}' is not a document type.", "Filter with one of valid_types.",
+                                     valid_types=names, how_it_works=TYPE_RULE)
+            stmt = stmt.where(ContextDocument.type == type)
         if tag:
             stmt = stmt.where(ContextDocument.tags.contains([tag.lower()]))
         stmt = stmt.order_by(ContextDocument.type, ContextDocument.title)
@@ -191,7 +182,8 @@ async def _save(session: AsyncSession, doc: ContextDocument, agent: str) -> dict
 
 @mcp.tool()
 async def save_document(slug: str, agent: str, content: str | None = None, title: str | None = None,
-                        type: str | None = None, tags: list[str] | None = None) -> dict:
+                        type: str | None = None, tags: list[str] | None = None,
+                        type_description: str | None = None, privacy: str | None = None) -> dict:
     """Create or fully replace a document about the user (resume, project, experience...).
 
     `content` is plain text and replaces the whole document: `Key: value` lines at the top
@@ -203,14 +195,29 @@ async def save_document(slug: str, agent: str, content: str | None = None, title
     required. HOW THE TYPE IS CHOSEN: `type` if you pass it; otherwise the slug prefix (before '/').
     Valid types: resume, project, skill, experience, education, achievement, certification, profile.
     If your slug prefix is not one of these (e.g. 'interview/...'), pass `type` explicitly — the slug
-    can keep its prefix. Existing document: title, type and tags are kept unless you pass them.
+    can keep its prefix. Built-in types also cover everyday life: interview, note, person, health,
+    finance, home, travel, learning, reference. A brand-new type needs `type_description` (one line).
+    `privacy`: 'normal' (default), 'private' (kept out of automatic recall/search; returned by slug) or
+    'local-only' (private, and invisible to web assistants that reach Engram through its public link).
+    Use private/local-only for health, money, ID numbers, family matters.
+    Existing document: title, type, tags and privacy are kept unless you pass them.
     On any mistake the reply has `error` (what was wrong) and `fix` (what to send instead).
     `agent` (required): who you are, e.g. claude-code, chatgpt, gemini; stored as updated_by."""
     async def inner(session: AsyncSession):
         who, err = _agent(agent)
         if err:
             return err
+        if privacy is not None and privacy not in PRIVACY_LEVELS:
+            raise ToolInputError(f"`privacy` '{privacy}' is not a privacy level.",
+                                 "Use 'normal', 'private' or 'local-only'.", how_it_works=PRIVACY_RULE)
+        if is_remote() and privacy == "local-only":
+            raise ToolInputError("A remote request can't set privacy 'local-only': it would lock the document "
+                                 "away from you immediately.", "Use 'private', or set local-only from this "
+                                 "computer (admin page or a local assistant).", how_it_works=PRIVACY_RULE)
         doc = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+        if doc is not None and doc.privacy == "local-only" and is_remote():
+            raise ToolInputError(f"No document with slug '{slug}' is available to this connection.",
+                                 "Choose a different slug for a new document.")
         if doc is None:
             if "/" not in (slug or "") or slug.startswith("/") or slug.endswith("/"):
                 raise ToolInputError(f"Slug '{slug}' is not in '<type>/<name>' form.", SLUG_RULE,
@@ -221,14 +228,17 @@ async def save_document(slug: str, agent: str, content: str | None = None, title
                     f"No document '{slug}' exists, so this call creates one, and that needs: {', '.join(missing)}.",
                     "Pass the missing field(s). If you meant to change an existing document, use its exact slug "
                     "(see list_documents) — then title/type/tags are kept unless you pass them.")
-            doc_type = _doc_type(type) if type else _doc_type(slug.split("/")[0], from_slug=slug)
-            doc = ContextDocument(slug=slug, title=title, type=doc_type,
+            doc_type = (await resolve_type(session, type, description=type_description) if type else
+                        await resolve_type(session, slug.split("/")[0], from_slug=slug, description=type_description))
+            doc = ContextDocument(slug=slug, title=title, type=doc_type, privacy=privacy or "normal",
                                   tags=[], content="", sections={}, doc_metadata={})
             session.add(doc)
+        elif privacy is not None:
+            doc.privacy = privacy
         if title:
             doc.title = title
         if type:
-            doc.type = _doc_type(type)
+            doc.type = await resolve_type(session, type, description=type_description)
         if tags is not None:
             doc.tags = [t.strip().lower() for t in tags if t.strip()]
         if content is not None:
@@ -302,7 +312,7 @@ async def search_context(query: str, limit: int = 10) -> list[dict] | dict:
                     "MaxFragments=2, MaxWords=25, MinWords=8",
                 ).label("snippet"),
             )
-            .where(ContextDocument.search_vector.op("@@")(tsq))
+            .where(ContextDocument.search_vector.op("@@")(tsq), automatic(ContextDocument.privacy))
             .order_by(func.ts_rank(ContextDocument.search_vector, tsq).desc())
             .limit(limit)
         )
@@ -325,7 +335,7 @@ async def get_resume() -> dict:
     async def inner(session: AsyncSession):
         row = (
             await session.execute(
-                select(ContextDocument).where(ContextDocument.type == DocType.RESUME).limit(1)
+                select(ContextDocument).where(ContextDocument.type == DocType.RESUME.value, readable(ContextDocument.privacy)).limit(1)
             )
         ).scalar_one_or_none()
         if row is None:
@@ -360,13 +370,13 @@ async def find_relevant_context(job_description: str, limit: int = 20) -> dict:
         tsq = func.to_tsquery("english", tsquery_str)
 
         resume_row = (await session.execute(
-            select(ContextDocument).where(ContextDocument.type == DocType.RESUME).limit(1)
+            select(ContextDocument).where(ContextDocument.type == DocType.RESUME.value, readable(ContextDocument.privacy)).limit(1)
         )).scalar_one_or_none()
 
         async def top(doc_type: DocType, k: int):
             stmt = (
                 select(ContextDocument, func.ts_rank(ContextDocument.search_vector, tsq).label("rank"))
-                .where(ContextDocument.type == doc_type)
+                .where(ContextDocument.type == getattr(doc_type, 'value', doc_type), automatic(ContextDocument.privacy))
                 .where(ContextDocument.search_vector.op("@@")(tsq))
                 .order_by(func.ts_rank(ContextDocument.search_vector, tsq).desc())
                 .limit(k)
@@ -610,7 +620,7 @@ async def forget(item_id: str) -> dict:
 async def resource_index() -> str:
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(
-            select(ContextDocument).order_by(ContextDocument.type, ContextDocument.title)
+            select(ContextDocument).where(readable(ContextDocument.privacy)).order_by(ContextDocument.type, ContextDocument.title)
         )).scalars().all()
         return "\n".join(f"context://documents/{r.slug}\t{r.title}" for r in rows)
 
@@ -618,7 +628,8 @@ async def resource_index() -> str:
 @mcp.resource("context://documents/{slug}")
 async def resource_doc(slug: str) -> str:
     async with AsyncSessionLocal() as session:
-        row = (await session.execute(select(ContextDocument).where(ContextDocument.slug == slug))).scalar_one_or_none()
+        row = (await session.execute(select(ContextDocument).where(
+            ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
         if row is None:
             return f"NOT FOUND: {slug}"
         return row.content

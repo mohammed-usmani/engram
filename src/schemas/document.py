@@ -5,16 +5,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.models import DocType, Source
+from src.models import Source
 
 
 class DocumentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     slug: str
     title: str
-    type: DocType
+    type: str
     tags: list[str]
     source: Source
+    privacy: str = "normal"
 
 
 class DocumentRead(DocumentSummary):
@@ -28,7 +29,7 @@ class DocumentRead(DocumentSummary):
 
 
 class DocumentCreate(BaseModel):
-    type: DocType
+    type: str
     slug: str | None = None
     title: str
     tags: list[str] = []
@@ -43,4 +44,4 @@ class DocumentUpdate(BaseModel):
     content: str | None = None
     sections: dict[str, str] | None = None
     metadata: dict[str, Any] | None = None
-    type: DocType | None = None
+    type: str | None = None

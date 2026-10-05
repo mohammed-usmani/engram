@@ -82,3 +82,20 @@ async def test_browser_signs_in_through_a_tunnel(client, monkeypatch):
 
     evil = await client.post("/login", data={"admin_token": "secret", "next": "//evil.example"}, headers=tunnel)
     assert evil.headers["location"] == "/admin"  # no open redirect
+
+
+async def test_admin_new_type_and_privacy(client, engine, monkeypatch):
+    async def fake_embed(text):
+        return [0.1] * 768
+    monkeypatch.setattr(admin, "embed", fake_embed)
+    r = await client.post("/api/admin/new", data={"type": "recipe", "title": "Dal", "tags": "",
+                                                    "content": "Ingredients:\n- dal\n"}, follow_redirects=False)
+    assert r.status_code == 400 and "type_description" in r.text   # new type needs a description
+    r = await client.post("/api/admin/new", data={"type": "recipe", "type_description": "Recipes I cook",
+                                                    "privacy": "private", "title": "Dal", "tags": "",
+                                                    "content": "Ingredients:\n- dal\n"}, follow_redirects=False)
+    assert r.status_code == 303
+    Session = async_sessionmaker(bind=engine, expire_on_commit=False)
+    async with Session() as s:
+        doc = (await s.execute(select(ContextDocument).where(ContextDocument.slug == "recipe/dal"))).scalar_one()
+    assert doc.type == "recipe" and doc.privacy == "private"

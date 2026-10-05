@@ -337,8 +337,11 @@ async def expand(session: AsyncSession, item_id: str) -> dict | None:
         return await facts.get_fact(key)
     if prefix == "d":
         from src.models import ContextDocument
-        d = (await session.execute(select(ContextDocument).where(ContextDocument.slug == key))).scalar_one_or_none()
-        return {"slug": d.slug, "title": d.title, "type": d.type.value, "content": d.content, "sections": d.sections} if d else None
+        from src.privacy import readable
+        d = (await session.execute(select(ContextDocument).where(
+            ContextDocument.slug == key, readable(ContextDocument.privacy)))).scalar_one_or_none()
+        return {"slug": d.slug, "title": d.title, "type": getattr(d.type, "value", d.type), "privacy": d.privacy,
+                "content": d.content, "sections": d.sections} if d else None
     return None
 
 

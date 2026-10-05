@@ -32,7 +32,7 @@ async def test_chat_endpoint(chat_app):
 
     with patch("src.services.chat.retrieve", new_callable=AsyncMock, return_value=[]), \
          patch("src.services.chat.search_memories", new_callable=AsyncMock, return_value=[]), \
-         patch("src.services.chat.get_provider", return_value=mock_provider), \
+         patch("src.memory.llm.make", return_value=mock_provider), \
          patch("src.services.chat.extract_memories", new_callable=AsyncMock, return_value=[]), \
          patch("src.services.chat.maybe_compact", new_callable=AsyncMock, return_value=False), \
          patch("src.services.chat.embed", new_callable=AsyncMock, return_value=[0.5] * 768):

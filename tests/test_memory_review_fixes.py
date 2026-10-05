@@ -134,7 +134,7 @@ async def test_outage_does_not_consume_attempts(session, monkeypatch):
 
 
 # #8 — fast recall survives Ollama being down
-async def test_recall_without_embeddings(session, monkeypatch):
+async def test_recall_without_embeddings(session, monkeypatch, mem0_store):
     session.add(Episode(occurred_at=WHEN, kind="applied", summary="Applied to Acme", entities=["topic:job-search"]))
     from src.memory.models import Entity
     session.add(Entity(slug="topic:job-search", kind="topic", name="Job search", aliases=[]))

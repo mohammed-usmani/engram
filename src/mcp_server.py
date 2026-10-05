@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import difflib
 import logging
 import re
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.database import AsyncSessionLocal
+from src import attachments as _att, dates as _dates
 from src.doc_types import TYPE_RULE, list_types, resolve_type, type_names
 from src.models import ContextDocument, DocType, Source, ChatSession, ChatMessage
 from src.privacy import PRIVACY_LEVELS, PRIVACY_RULE, automatic, is_remote, readable
@@ -154,9 +156,45 @@ async def get_document(slug: str) -> dict:
     'experience/example-labs', 'education/bsc', 'resume/master_resume'.
 
     Returns: {slug, title, type, tags, content (full text), sections (parsed sections),
-    metadata (key-value attributes)}. An unknown slug returns `error`, `fix` and `did_you_mean`."""
+    metadata (key-value attributes), attachments (files with their extracted text, first 4000 chars)}.
+    An unknown slug returns `error`, `fix` and `did_you_mean`."""
     async def inner(session: AsyncSession):
-        return _doc_full(await _find_doc(session, slug))
+        doc = await _find_doc(session, slug)
+        return {**_doc_full(doc), "attachments": [_att.summary(a) for a in await _att.for_doc(session, doc)]}
+    return await _with_session(inner)
+
+
+@mcp.tool()
+async def attach_file(slug: str, filename: str, content_base64: str, agent: str) -> dict:
+    """Attach a file (PDF, image, text...) to an existing document, e.g. a scanned passport to
+    'travel/passport' or a policy PDF to 'finance/car-insurance'. `content_base64` is the whole file,
+    base64-encoded; `filename` needs its extension (it decides extraction: PDF text layer, OCR for images
+    and scans, plain text). Max 20 MB. The extracted text becomes searchable with the document, and the file
+    inherits the document's privacy. Re-sending identical bytes is a no-op. Create the document first with
+    save_document if it does not exist. `agent` (required): who you are."""
+    async def inner(session: AsyncSession):
+        who, _ = _agent(agent)
+        doc = await _find_doc(session, slug)
+        try:
+            data = base64.b64decode(content_base64 or "", validate=True)
+        except (ValueError, TypeError):
+            raise ToolInputError("`content_base64` is not valid base64.",
+                                 "Send the file's raw bytes base64-encoded (standard alphabet, no data: URL prefix, "
+                                 "no line breaks).") from None
+        a, note = await _att.add(session, doc, filename, data, who)
+        return {"id": a.id, "slug": doc.slug, "filename": a.filename, "mime": a.mime, "size": a.size,
+                "text_chars": len(a.text), "extraction": note, "privacy": doc.privacy}
+    return await _with_session(inner)
+
+
+@mcp.tool()
+async def delete_attachment(slug: str, attachment_id: int, agent: str) -> dict:
+    """Remove one attached file from a document (ids are in get_document's `attachments`). `agent` required."""
+    async def inner(session: AsyncSession):
+        _agent(agent)
+        doc = await _find_doc(session, slug)
+        await _att.remove(session, doc, attachment_id)
+        return {"deleted": attachment_id, "slug": doc.slug}
     return await _with_session(inner)
 
 
@@ -308,7 +346,7 @@ async def search_context(query: str, limit: int = 10) -> list[dict] | dict:
                 ContextDocument,
                 func.ts_rank(ContextDocument.search_vector, tsq).label("rank"),
                 func.ts_headline(
-                    "english", ContextDocument.content, tsq,
+                    "english", ContextDocument.content + "\n" + ContextDocument.attachments_text, tsq,
                     "MaxFragments=2, MaxWords=25, MinWords=8",
                 ).label("snippet"),
             )
@@ -598,6 +636,27 @@ async def timeline(entity: str, since: str | None = None, limit: int = 100) -> l
                                  "Pass a date like '2026-10-01' (or a full ISO date/time), or omit it.") from None
         rows = await _recall_mod.timeline(session, entity, since_dt, limit)
         return [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()} for r in rows]
+    return await _with_session(inner)
+
+
+@mcp.tool()
+async def upcoming(days: int = 60) -> dict:
+    """Dates coming up in the user's documents within `days` (1-366), plus one-off dates overdue by up to
+    30 days: expiries, renewals, due dates, appointments, birthdays, anniversaries. Each item has slug,
+    title, label, date, days_left (negative = overdue) and `turns` for birthdays with a known year.
+    Private documents appear as these reminder fields only; get_document(slug) for the rest.
+    To track a new date, add a `Key: value` line at the top of a document (see how_it_works)."""
+    async def inner(session):
+        if not isinstance(days, int) or not 1 <= days <= 366:
+            raise ToolInputError(f"`days` must be a whole number from 1 to 366, got {days!r}.",
+                                 "Pass e.g. days=30 for the next month, or omit it for 60.")
+        items, unreadable = await _dates.upcoming(session, days)
+        out = {"items": items, "how_it_works": _dates.DATE_RULE}
+        if unreadable:
+            out["unreadable_dates"] = unreadable
+            out["fix_unreadable"] = ("These date fields could not be parsed, so they are not tracked. "
+                                     "Rewrite the value with edit_document as e.g. 2027-03-14.")
+        return out
     return await _with_session(inner)
 
 

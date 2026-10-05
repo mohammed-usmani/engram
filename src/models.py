@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
@@ -52,6 +52,8 @@ class ContextDocument(Base):
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)  # assistant or "admin"
     privacy: Mapped[str] = mapped_column(String(16), nullable=False, default="normal",
                                          server_default="normal")  # see src/privacy.py
+    # extracted text of every attachment, kept here so the search trigger and embedding cover it
+    attachments_text: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
     search_vector: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
     embedding: Mapped[Any] = mapped_column(Vector(768), nullable=True)
 
@@ -66,6 +68,28 @@ class ContextDocument(Base):
         Index("ix_context_documents_tags_gin", "tags", postgresql_using="gin"),
         Index("ix_context_documents_search_vector", "search_vector", postgresql_using="gin"),
     )
+
+
+class DocumentAttachment(Base):
+    """A file attached to a document. Bytes live in Postgres so backups and machine moves carry them.
+    Privacy is the document's."""
+    __tablename__ = "document_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("context_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime: Mapped[str] = mapped_column(String(127), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("document_id", "sha256", name="uq_document_attachments_doc_sha"),)
 
 
 class DocumentType(Base):

@@ -79,6 +79,17 @@
       {% if topics %}<p class="muted" style="margin-top:.6rem"><a href="/memory?tab=topics">All topics →</a></p>{% endif %}
     </section>
     <section>
+      {% if upcoming %}
+      <h2>Coming up</h2>
+      <table><tbody>
+      {% for u in upcoming %}
+        <tr><td class="muted" style="white-space:nowrap">{{ u.date }}</td>
+            <td><a href="/api/admin/{{ u.slug }}">{{ u.title }}</a> — {{ u.label }}{% if u.turns %} (turns {{ u.turns }}){% endif %}
+              <span class="{{ 'warn' if u.days_left < 0 else 'muted' }}">· {{ 'today' if u.days_left == 0 else ('in %d days' % u.days_left if u.days_left > 0 else 'overdue by %d days' % -u.days_left) }}</span></td></tr>
+      {% endfor %}
+      </tbody></table>
+      <div style="margin-bottom:1.5rem"></div>
+      {% endif %}
       <h2>Recent events</h2>
       <table><tbody>
       {% for e in recent %}

@@ -3,17 +3,21 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from src.config import settings
 from src.database import get_session
 from src.doc_types import resolve_type, type_names
-from src.models import ContextDocument, Source
-from src.privacy import PRIVACY_LEVELS, readable
+from src import attachments
+from src.models import ContextDocument, DocumentAttachment, Source
+from src.privacy import PRIVACY_LEVELS, is_remote, readable
 from src.tool_errors import ToolInputError
 import logging
 
@@ -31,7 +35,7 @@ async def _refresh_derived(doc: ContextDocument) -> None:
     """Sections/metadata come from the text, and search must see the edit immediately."""
     doc.sections, doc.doc_metadata = derive_fields(doc.content)
     try:
-        doc.embedding = await embed(f"{doc.title}\n{doc.content}"[:6000])
+        doc.embedding = await embed(f"{doc.title}\n{doc.content}\n{doc.attachments_text or ''}"[:6000])
     except Exception as e:  # Ollama down: keep the edit, re-embed later via /api/admin/embed
         log.warning("re-embed failed for %s: %s", doc.slug, e)
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -218,6 +222,55 @@ async def new_submit(
     return RedirectResponse(f"/api/admin/{chosen_slug}", status_code=303)
 
 
+async def _readable_doc(session: AsyncSession, slug: str) -> ContextDocument:
+    doc = (await session.execute(select(ContextDocument).where(
+        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(404, "not found")
+    return doc
+
+
+# Attachment routes come before the /{slug:path} catch-alls below.
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(attachment_id: int, session: AsyncSession = Depends(get_session),
+                              _: None = Depends(_check_token)):
+    a = await session.get(DocumentAttachment, attachment_id, options=[undefer(DocumentAttachment.data)])
+    doc = a and await session.get(ContextDocument, a.document_id)
+    if a is None or doc is None or not _is_readable(doc):
+        raise HTTPException(404, "not found")
+    return Response(a.data, media_type=a.mime,
+                    headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(a.filename)}"})
+
+
+@router.post("/attachments/{attachment_id}/delete")
+async def delete_attachment(attachment_id: int, session: AsyncSession = Depends(get_session),
+                            _: None = Depends(_check_token)):
+    a = await session.get(DocumentAttachment, attachment_id)
+    doc = a and await session.get(ContextDocument, a.document_id)
+    if a is None or doc is None or not _is_readable(doc):
+        raise HTTPException(404, "not found")
+    await attachments.remove(session, doc, attachment_id)
+    return RedirectResponse(f"/api/admin/{doc.slug}", status_code=303)
+
+
+@router.post("/{slug:path}/attachments")
+async def upload_attachment(slug: str, request: Request, file: UploadFile = File(...),
+                            session: AsyncSession = Depends(get_session), _: None = Depends(_check_token)):
+    """Browser form or REST multipart (`file` field). JSON reply unless the caller wants HTML."""
+    doc = await _readable_doc(session, slug)
+    try:
+        a, note = await attachments.add(session, doc, file.filename or "", await file.read(), "admin")
+    except ToolInputError as e:
+        raise HTTPException(400, f"{e.payload['error']} {e.payload['fix']}") from None
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(f"/api/admin/{slug}", status_code=303)
+    return {"id": a.id, "filename": a.filename, "size": a.size, "text_chars": len(a.text), "extraction": note}
+
+
+def _is_readable(doc: ContextDocument) -> bool:
+    return not (is_remote() and doc.privacy == "local-only")
+
+
 @router.post("/{slug:path}/delete")
 async def delete_doc(
     slug: str,
@@ -245,6 +298,7 @@ async def edit_form(
         raise HTTPException(404, "not found")
     return templates.TemplateResponse("edit.html", {
         "request": request, "is_new": False, "doc": doc, "privacy_levels": PRIVACY_LEVELS,
+        "attachments": await attachments.for_doc(session, doc),
         "types": await type_names(session), "error": None,
         "active_page": "documents",
     })

@@ -189,6 +189,36 @@ A **profile** document (`profile/linkedin`, `profile/indeed`, `profile/github`�
 a public profile currently shows, so an assistant asked "what does my LinkedIn say?" quotes it instead
 of guessing. Note anything you haven't captured yet in the document itself, so nothing gets invented.
 
+Documents aren't only for careers. Each has a **type**: the career ones above, plus everyday
+built-ins (`note`, `person`, `health`, `finance`, `home`, `travel`, `learning`, `reference`,
+`interview`). Any other type works too: give it a one-line description the first time it is used,
+and it joins the registry (`GET /api/types`, `list_document_types`). Near-duplicates (`projects` when
+`project` exists) are refused with a suggestion.
+
+Each document also has a **privacy** level:
+
+| Level | Behaviour |
+|---|---|
+| `normal` | everywhere: recall briefs, search, every assistant |
+| `private` | never in automatic recall or search; listed by title, returned when asked for by slug |
+| `local-only` | as private, and invisible to anything arriving through the public link (web assistants) |
+
+**Dates you care about** are just fields. Put `Expires: 2027-03-14`, `Renews: 14/03/2027`, `Due:`,
+`Deadline:`, `Appointment:`, `Next service:` or `Matures:` (one-off), or `Birthday: 10 Oct 1976` or
+`Anniversary:` (yearly), at the top of any document. Every recall brief then opens with a
+**Coming up** section: the next 60 days, plus anything overdue in the last 30. The same list is on
+the `/memory` overview, from the `upcoming` tool and from `GET /api/upcoming`. A private document's
+date shows only as a reminder line (title, label, date), never its content.
+
+**Attachments**: attach PDFs, scans, photos or text files to any document from its admin page,
+over MCP (`attach_file`, base64), or with `curl -F file=@policy.pdf
+localhost:8001/api/admin/<slug>/attachments`. Text is extracted (the PDF text layer via poppler,
+OCR via tesseract for images and scans), so search and recall find the document by what is *in*
+the file. Files live in Postgres, so backups and machine moves carry them, and they share their
+document's privacy. Install the extractors with `brew install poppler tesseract` or
+`pacman -S poppler tesseract tesseract-data-eng`; without them, files are still stored, just not
+read.
+
 The admin pages follow the same rule as everything else: no token from your own browser on
 `localhost`, the token for anything arriving through a tunnel.
 
@@ -279,6 +309,10 @@ refused), so they use `MEMORY_BATCH_MODEL`, default `openai/gpt-oss-120b` (126/1
 | `GET /api/memory/timeline/{entity}` | chronological events for `topic:job-search`, `company:acme`, … |
 | `GET /api/memory/jobs` · `POST …/jobs/{id}/retry` | extraction queue status / retry |
 | `POST /api/memory/consolidate` | run the sleep pass soon |
+| `GET /api/upcoming?days=60` | tracked dates coming up (and recently overdue) |
+| `GET /api/types` | document types with descriptions and counts |
+| `POST /api/admin/{slug}/attachments` | multipart `file` → attach to a document |
+| `GET /api/admin/attachments/{id}` | download an attachment |
 
 Engram also ships a document manager (`/admin`), a document store with hybrid search, and a RAG chat
 (`/chat`) over your documents.

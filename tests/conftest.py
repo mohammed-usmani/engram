@@ -49,7 +49,8 @@ async def engine():
             BEGIN
               NEW.search_vector :=
                 setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-                setweight(to_tsvector('english', coalesce(NEW.content, '')), 'B');
+                setweight(to_tsvector('english', coalesce(NEW.content, '')), 'B') ||
+                setweight(to_tsvector('english', coalesce(NEW.attachments_text, '')), 'C');
               RETURN NEW;
             END
             $$ LANGUAGE plpgsql;

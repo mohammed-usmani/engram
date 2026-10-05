@@ -85,6 +85,8 @@ async def memory_page(request: Request, tab: str = "overview", q: str | None = N
     if tab in ("overview", "topics"):
         ctx["topics"] = await _topics(session, limit=12 if tab == "overview" else 200)
     if tab == "overview":
+        from src.dates import upcoming
+        ctx["upcoming"], _ = await upcoming(session, days=60)
         ctx["recent"] = (await session.execute(
             select(Episode).order_by(Episode.occurred_at.desc()).limit(8))).scalars().all()
     if tab == "events":

@@ -11,7 +11,9 @@ from sqlalchemy import ColumnElement
 PRIVACY_LEVELS = ("normal", "private", "local-only")
 PRIVACY_RULE = ("privacy: 'normal' (default — used everywhere), 'private' (never in automatic recall or search; "
                 "listed by title and returned when you ask for it by slug), 'local-only' (like private, and "
-                "invisible to requests that come through the public link, e.g. web assistants).")
+                "invisible to requests that come through the public link, e.g. web assistants). Tracked dates "
+                "(Expires:, Birthday:...) from private documents still show in 'Coming up' as a reminder line "
+                "(title, label, date), never their content.")
 
 # Set per HTTP request by the auth middleware; stdio MCP and in-process callers are local.
 REQUEST_IS_REMOTE: ContextVar[bool] = ContextVar("engram_request_is_remote", default=False)

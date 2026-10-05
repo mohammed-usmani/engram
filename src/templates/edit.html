@@ -119,4 +119,22 @@
     {% endif %}
   </div>
 </form>
+
+{% if not is_new %}
+<h2 style="margin-top:2rem">Attachments</h2>
+<p class="muted" style="font-size:0.82rem">PDFs, scans, photos, text files (max 20 MB). Their text is extracted
+  (OCR for images) and searched with this document; they share its privacy.</p>
+<table><tbody>
+{% for a in attachments or [] %}
+  <tr><td><a href="/api/admin/attachments/{{ a.id }}" target="_blank">{{ a.filename }}</a></td>
+      <td class="muted">{{ (a.size / 1024) | round(1) }} KB · {{ a.text | length }} chars of text</td>
+      <td><form method="post" action="/api/admin/attachments/{{ a.id }}/delete" style="margin:0">
+        <button class="btn-danger" onclick="return confirm('Remove {{ a.filename }}?')">Remove</button></form></td></tr>
+{% else %}<tr><td class="empty-state">No files attached.</td></tr>{% endfor %}
+</tbody></table>
+<form method="post" action="/api/admin/{{ doc.slug }}/attachments" enctype="multipart/form-data" style="margin-top:.8rem">
+  <input type="file" name="file" required>
+  <button type="submit" class="btn-primary">Attach</button>
+</form>
+{% endif %}
 {% endblock %}

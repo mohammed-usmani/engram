@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -130,6 +130,15 @@ async def health() -> dict[str, str]:
 async def types(session: AsyncSession = Depends(get_session)) -> list[dict]:
     from src.doc_types import list_types
     return await list_types(session)
+
+
+@app.get("/api/upcoming")
+async def upcoming(days: int = 60, session: AsyncSession = Depends(get_session)) -> dict:
+    from src.dates import DATE_RULE, upcoming as _upcoming
+    if not 1 <= days <= 366:
+        raise HTTPException(422, "days must be from 1 to 366")
+    items, unreadable = await _upcoming(session, days)
+    return {"items": items, "unreadable_dates": unreadable, "how_it_works": DATE_RULE}
 
 
 # OAuth for MCP clients without a fixed header (only when PUBLIC_URL is set); before the mount.

@@ -24,6 +24,8 @@ from src.memory.llm import complete_json
 from src.memory.models import Entity, Episode, MemoryBlock, Reflection, SessionState
 from src.services.ollama_client import embed
 
+from src.dates import format_line, upcoming as upcoming_dates
+
 log = logging.getLogger(__name__)
 
 ENTITY_SIM = 0.6          # situation ↔ entity embedding; measured: hits ≥0.64, misses ≤0.51
@@ -247,6 +249,13 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
             prof.content = live
         await session.commit()
     pinned.append("## You\n" + (live or (prof.content if prof else "(no profile yet — memory is still learning about you)")))
+    try:
+        soon, _ = await upcoming_dates(session, days=60)
+    except Exception as e:  # never let a bad date field break recall
+        log.warning("upcoming dates unavailable: %s", e)
+        soon = []
+    if soon:
+        pinned.append("## Coming up\n" + "\n".join(format_line(i) for i in soon[:8]))
     if session_id:
         notes = (await session.execute(select(SessionState).where(
             SessionState.session_id == session_id, SessionState.expires_at > now))).scalars().all()

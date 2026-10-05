@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Recall inspector · Engram{% endblock %}
+{% block head %}<style>
+.budget { display:flex; height:28px; border-radius:7px; overflow:hidden; background:var(--sunk); }
+.budget span { display:block; height:100%; border-right:2px solid #fff; }
+.sw { width:12px; height:12px; border-radius:3px; flex:none; display:inline-block; }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Recall inspector</h1><div class="sub">The exact brief an assistant would get, where every token went, and why each memory ranked where it did.</div></div>
+  </header>
+
+  <form class="card inline" id="inspect" style="align-items:flex-end;padding:16px">
+    <label class="field" style="flex:1 1 360px"><span class="label">Situation</span>
+      <input class="input" name="situation" value="{{ situation }}" placeholder="What you'd say to an assistant, e.g. “prep me for the Redfox next round”" required></label>
+    <div class="field"><span class="label" id="mode-l">Planner</span>
+      <div class="seg" role="radiogroup" aria-labelledby="mode-l">
+        <label><input type="radio" name="fast" value="1" checked> Fast · no LLM</label>
+        <label><input type="radio" name="fast" value="0"> With planner</label>
+      </div></div>
+    <label class="field"><span class="label">Budget</span>
+      <select class="select" name="budget_tokens">{% for b in [800, 1500, 3000] %}<option value="{{ b }}" {{ 'selected' if b == 1500 }}>{{ "{:,}".format(b) }} tokens</option>{% endfor %}</select></label>
+    <button class="btn primary" type="submit">Run recall</button>
+  </form>
+  <p class="small muted" id="status">Pinned text limit: {{ ((recall.pinned_cap or 1) * 100)|round|int }}% of the budget{% if recall.self_entity %} · “you” is {{ recall.self_entity }}{% endif %} · <a href="/settings#h-recall">change</a>. “With planner” makes one LLM call.</p>
+
+  <div id="out" class="stack" style="gap:20px" hidden>
+    <section class="card stack">
+      <div class="between"><h2>Where the budget went</h2><span><b id="used"></b> <span class="muted" id="of"></span></span></div>
+      <div class="budget" id="bar" role="img"></div>
+      <div class="grid-auto" id="legend" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 20px"></div>
+      <div id="advice"></div>
+    </section>
+    <div class="row-wrap">
+      <section class="card stack" style="padding:20px 12px 12px;flex:1 1 100%;min-width:0">
+        <div class="between" style="padding:0 8px"><h2>Ranked memories</h2><span class="small muted">score = fusion × weight × importance × confidence × recency × topic boost</span></div>
+        <div class="inline" style="padding:0 8px" id="plan"></div>
+        <div class="scroll-x"><table class="t" style="min-width:760px">
+          <thead><tr><th scope="col">Score</th><th scope="col">Memory</th><th scope="col">Imp.</th><th scope="col">Conf.</th><th scope="col">Recency</th><th scope="col">Boost</th><th scope="col">Brief</th></tr></thead>
+          <tbody id="rows"></tbody></table></div>
+      </section>
+      <section class="card stack" style="flex:1 1 100%;min-width:0">
+        <div class="between"><h2>The brief</h2><button class="btn sm" id="copy" type="button">Copy</button></div>
+        <pre class="brief" id="brief"></pre>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+const RECALL = {{ recall|tojson }};
+const PIN = ['#8A5A1F', '#A8742F', '#C4914A', '#D9B98C', '#B98A50', '#E6CFA8', '#7A4A12'];
+const RANK = ['#2D5B8A', '#6E8FB3', '#A9C0DA', '#24496F', '#4F79A6', '#C9D8E8'];
+const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+const LINK = (id) => id.startsWith('e:') ? `/events?focus=${id.slice(2)}` : id.startsWith('r:') ? `/lessons#r-${id.slice(2)}`
+  : id.startsWith('f:') ? `/facts?q=` : id.startsWith('d:') ? `/api/admin/${id.slice(2)}` : '#';
+
+async function run(e) {
+  if (e) e.preventDefault();
+  const f = document.getElementById('inspect'), data = Engram.collect(f);
+  const body = { situation: data.situation, budget_tokens: parseInt(data.budget_tokens, 10), fast: data.fast !== '0' };
+  const btn = f.querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Running…';
+  try { render(await Engram.api('POST', '/api/recall/inspect', body)); history.replaceState(null, '', '?situation=' + encodeURIComponent(body.situation)); }
+  catch (err) { Engram.toast(err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Run recall'; }
+}
+
+function render(r) {
+  const x = r.explain; document.getElementById('out').hidden = false;
+  document.getElementById('used').textContent = x.used.toLocaleString();
+  document.getElementById('of').textContent = `of ${x.budget.toLocaleString()} tokens`;
+  let pi = 0, ri = 0;
+  const segs = x.sections.map((s) => ({ ...s, color: s.pinned ? PIN[pi++ % PIN.length] : RANK[ri++ % RANK.length] }));
+  const bar = document.getElementById('bar');
+  bar.innerHTML = segs.map((s) => `<span style="width:${(s.tokens / x.budget * 100).toFixed(2)}%;background:${s.color}" title="${esc(s.title)}: ${s.tokens}"></span>`).join('');
+  const pinned = segs.filter((s) => s.pinned).reduce((a, s) => a + s.tokens, 0), ranked = x.used - pinned;
+  bar.setAttribute('aria-label', `Pinned sections used ${pinned} tokens; ranked memories used ${ranked}`);
+  document.getElementById('legend').innerHTML = segs.map((s) => `<div class="inline small" style="flex-wrap:nowrap"><span class="sw" style="background:${s.color}"></span><span style="flex:1">${esc(s.title)}${s.pinned ? '' : ' <span class="muted">(ranked)</span>'}${s.full && s.full > s.tokens ? ` <span class="tiny muted">cut from ${s.full}</span>` : ''}</span><span class="mono">${s.tokens}</span></div>`).join('');
+
+  const tips = [], share = x.used ? Math.round(pinned / x.used * 100) : 0, inBrief = x.candidates.filter((c) => c.in_brief).length;
+  if (share >= 60) tips.push(`<b>${share}% went to pinned sections.</b> Only ${inBrief} ranked memor${inBrief === 1 ? 'y' : 'ies'} fit.`);
+  if (!RECALL.self_entity) {
+    const person = (r.plan.entities || []).find((s) => s.startsWith('person:'));
+    if (person) tips.push(`“${esc(person)}” matched. If that's you, it boosts nearly everything and gets its own summary. <button class="btn sm" data-api="PUT /api/settings/recall" data-body='${JSON.stringify({ self_entity: person, pinned_cap: RECALL.pinned_cap })}' data-then="toast:Saved|reload">Treat it as me</button>`);
+  }
+  if (!RECALL.pinned_cap && share >= 60) tips.push(`No limit on pinned text. <button class="btn sm" data-api="PUT /api/settings/recall" data-body='${JSON.stringify({ self_entity: RECALL.self_entity, pinned_cap: 0.5 })}' data-then="toast:Saved|reload">Cap pinned text at half</button>`);
+  const names = (r.plan.entities || []).map((s) => s.split(':')[1]);
+  const dup = names.find((n, i) => names.some((m, j) => j !== i && m.startsWith(n + '-')));
+  if (dup) tips.push(`Two topics look like one (“${esc(dup)}”), so it may be summarized twice. <a class="btn sm" href="/cleanup#merge">Review in Cleanup</a>`);
+  document.getElementById('advice').innerHTML = tips.length ? `<div class="callout"><div class="stack" style="gap:8px">${tips.map((t) => `<div>${t}</div>`).join('')}</div></div>` : '';
+
+  document.getElementById('plan').innerHTML = '<span class="label">Matched topics</span> ' + ((r.plan.entities || []).map((s) => `<a class="chip blue" href="/topics/${encodeURIComponent(s)}">${esc(s)}</a>`).join(' ') || '<span class="small muted">none</span>')
+    + ((r.plan.excluded || []).map((s) => ` <span class="chip" title="Set as you in Settings">${esc(s)} · you, excluded</span>`).join(''));
+  const top = Math.max(...x.candidates.map((c) => c.score), 1e-9);
+  document.getElementById('rows').innerHTML = x.candidates.map((c) => `<tr>
+    <td style="width:120px"><div class="mono tiny">${c.score.toFixed(4)}</div><div class="bar"><span style="width:${Math.round(c.score / top * 100)}%"></span></div></td>
+    <td><a class="mono tiny muted" href="${LINK(c.id)}">${esc(c.id)}</a> <span class="tiny muted">· ${esc(c.kind)} · ${c.tokens} tokens</span><div>${esc(c.text)}</div></td>
+    <td class="mono">${c.importance}</td><td class="mono">${c.confidence.toFixed(2)}</td><td class="mono">${c.recency.toFixed(2)}</td>
+    <td class="mono">${c.boost ? '×1.5' : '—'}</td>
+    <td><span class="chip ${c.in_brief ? 'green' : ''}">${c.in_brief ? 'in brief' : 'no room'}</span></td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">Nothing matched.</td></tr>';
+  document.getElementById('brief').textContent = r.brief || '(empty)';
+}
+
+document.getElementById('inspect').addEventListener('submit', run);
+document.getElementById('copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(document.getElementById('brief').textContent); Engram.toast('Brief copied'); }
+  catch (_) { Engram.toast('Copy failed: select the text instead', 'error'); }
+});
+if (document.querySelector('[name=situation]').value) run();
+</script>{% endblock %}

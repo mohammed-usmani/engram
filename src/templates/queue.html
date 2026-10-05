@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Queue · Engram{% endblock %}
+{% block head %}<style>
+.job-detail { display:none; } .job-detail.open { display:table-row; }
+.job-detail td { background:var(--paper); }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Queue</h1><div class="sub">Every piece of text assistants send, and what Engram pulled out of it.</div></div>
+    <div class="inline"><button class="btn" data-api="POST /api/memory/consolidate" data-then="toast:Summary pass requested">Run summary pass</button></div>
+  </header>
+
+  {% if batch.on %}
+  <section class="callout dark" style="flex-wrap:wrap;justify-content:space-between;align-items:center">
+    <div class="stack" style="gap:4px;flex:1 1 420px"><b>Batch mode is on{% if counts.batched %} · {{ counts.batched }} job{{ 's' if counts.batched != 1 }} waiting at Together{% endif %}</b>
+      <span class="muted small">Batches use {{ batch.model }} at full price on your bill, which costs more than live extraction.</span></div>
+    <button class="btn" data-api="POST /api/memory/batch-mode" data-body='{"on": false}'>Switch to live</button>
+  </section>
+  {% elif counts.batched %}
+  <div class="callout info">{{ counts.batched }} job{{ 's' if counts.batched != 1 }} sent before batch mode was switched off. They'll still be collected and processed.</div>
+  {% endif %}
+
+  <section class="card stack" aria-labelledby="h-pipe">
+    <div class="between"><h2 id="h-pipe">How text becomes memory</h2><span class="small muted">Extraction now: {{ extract|join(" → ") }} · <a href="/settings#h-jobs">change</a></span></div>
+    <ol style="list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">
+      {% for n, name, what in [("1", "Redact", "API keys, passwords and card numbers removed before storage"),
+                               ("2", "Extract", "One LLM call finds events, facts, procedures and notes"),
+                               ("3", "Resolve topics", "Names matched to existing topics, or new ones made"),
+                               ("4", "Store", "Events deduplicated, then saved with their topics"),
+                               ("5", "Reconcile", "New facts checked against old ones: duplicate or replacement"),
+                               ("6", "Summarize later", "Touched topics wait for the sleep pass")] %}
+      <li class="soft stack" style="gap:4px"><span class="mono tiny muted">{{ n }}</span><b style="font-size:14px">{{ name }}</b><span class="tiny muted">{{ what }}</span></li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <nav class="grid-auto" aria-label="Filter by status">
+    {% for st, label in [("", "All"), ("done", "Processed"), ("pending", "Waiting"), ("batched", "In a batch"), ("failed", "Failed"), ("undone", "Undone")] %}
+      {% set n = (counts.values()|sum) if not st else (counts[st] or 0) %}
+      {% if not st or n %}
+      <a class="stat" href="/queue?status={{ st }}&agent={{ agent }}" style="{{ 'box-shadow:0 0 0 2px var(--ink)' if status == st }}"><span class="label">{{ label }}</span><span class="value">{{ n|num }}</span></a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+
+  <section class="card flush">
+    <div class="inline" style="padding:12px 14px;border-bottom:1px solid var(--line)">
+      <form method="get" class="inline"><input type="hidden" name="status" value="{{ status }}">
+        <label class="inline small muted">From
+          <select class="select" name="agent" onchange="this.form.submit()"><option value="">Any assistant</option>
+            {% for a, n in agents %}<option value="{{ a or '' }}" {{ 'selected' if agent == a }}>{{ a or "unknown" }} · {{ n }}</option>{% endfor %}</select></label></form>
+    </div>
+    <div class="scroll-x">
+      <table class="t" style="min-width:780px">
+        <thead><tr><th scope="col">Job</th><th scope="col">Status</th><th scope="col">From</th><th scope="col">Text</th><th scope="col">Events</th><th scope="col">Facts</th><th scope="col">Replaced</th><th scope="col">Dupes</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+        <tbody>
+        {% for j in jobs %}
+          {% set r = j.result or {} %}
+          <tr id="job-{{ j.id }}">
+            <td class="mono small">#{{ j.id }}<div class="tiny muted">{{ j.created_at|ago }}</div></td>
+            <td><span class="chip {{ {'done': 'green', 'failed': 'red', 'batched': 'amber', 'pending': 'blue', 'processing': 'blue'}.get(j.status, '') }}">{{ j.status }}</span>{% if j.attempts > 1 %}<div class="tiny muted">{{ j.attempts }} attempts</div>{% endif %}</td>
+            <td>{{ j.agent or "—" }}</td>
+            <td class="small" style="max-width:320px"><span class="muted">{{ j.chars|num }} chars</span>{% if j.error %}<div class="tiny" style="color:var(--red)">{{ j.error[:160] }}</div>{% endif %}</td>
+            <td class="mono">{{ r.episodes if r.episodes is defined else "—" }}</td>
+            <td class="mono">{{ r.facts if r.facts is defined else "—" }}</td>
+            <td class="mono">{{ r.superseded if r.superseded is defined else "—" }}</td>
+            <td class="mono">{{ r.duplicates if r.duplicates is defined else "—" }}</td>
+            <td><button class="btn sm" data-detail="{{ j.id }}" aria-expanded="false" aria-controls="detail-{{ j.id }}">Details</button></td>
+          </tr>
+          <tr class="job-detail" id="detail-{{ j.id }}"><td colspan="9"><div class="stack" data-body-for="{{ j.id }}"><span class="muted small">Loading…</span></div></td></tr>
+        {% else %}
+          <tr><td colspan="9" class="muted">No jobs{{ " with this status" if status }}.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="inline" style="justify-content:center;padding:12px">
+      {% if page > 1 %}<a class="btn sm" href="/queue?status={{ status }}&agent={{ agent }}&page={{ page - 1 }}">Newer</a>{% endif %}
+      {% if more %}<a class="btn sm" href="/queue?status={{ status }}&agent={{ agent }}&page={{ page + 1 }}">Older</a>{% endif %}
+    </div>
+  </section>
+
+  <section class="card stack" aria-labelledby="h-notes">
+    <div class="between"><h2 id="h-notes">Task notes</h2><span class="small muted">Short-lived notes for tasks in progress. When they expire they become events.</span></div>
+    {% for n in notes %}
+    <div class="list-row" id="note-{{ loop.index }}" style="align-items:center">
+      <span style="flex:1"><b>{{ n.key }}</b>: {{ n.value }}<div class="tiny muted mono">{{ n.session_id }} · expires {{ n.expires_at|day }}</div></span>
+      <button class="btn sm danger" data-api="DELETE /api/session-notes" data-body='{{ {"session_id": n.session_id, "key": n.key}|tojson }}' data-then="remove:#note-{{ loop.index }}|toast:Note removed">Remove</button>
+    </div>
+    {% else %}<p class="muted small">No active notes.</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-detail]'); if (!b) return;
+  const id = b.dataset.detail, row = document.getElementById('detail-' + id), body = row.querySelector('[data-body-for]');
+  const open = row.classList.toggle('open'); b.setAttribute('aria-expanded', open);
+  if (!open || body.dataset.loaded) return;
+  try {
+    const j = await Engram.api('GET', '/api/queue/jobs/' + id);
+    const topics = ((j.result || {}).entities || []).map((s) => `<a class="chip blue" href="/topics/${encodeURIComponent(s)}">${esc(s)}</a>`).join(' ');
+    const eps = j.episodes.map((x) => `<a class="list-row" style="text-decoration:none;color:var(--ink)" href="/events?focus=${x.id}"><span class="kind k-${esc(x.kind)}">${esc(x.kind.replace('_', ' '))}</span><span style="flex:1">${esc(x.summary)}</span></a>`).join('');
+    const fs = j.facts.map((f) => `<div class="soft small">${esc(f.text)} <span class="tiny muted">· ${esc(f.kind)}${f.replaced ? ' · replaced since' : ''}</span></div>`).join('');
+    const canUndo = !['pending', 'processing', 'batched'].includes(j.status);
+    body.innerHTML = `
+      <div class="between"><b>Job #${j.id}</b><span class="small muted">${esc(j.agent || '')} · session ${esc(j.session_id || '—')} · happened ${esc((j.occurred_at || '').slice(0, 16).replace('T', ' '))}</span></div>
+      ${j.error ? `<div class="callout bad">${esc(j.error)}</div>` : ''}
+      ${topics ? `<div class="inline"><span class="label">Topics touched</span>${topics}</div>` : ''}
+      ${eps ? `<div><span class="label">Events written</span>${eps}</div>` : ''}
+      ${fs ? `<div class="stack" style="gap:6px"><span class="label">Facts written</span>${fs}</div>` : ''}
+      <details><summary class="small" style="cursor:pointer">Show source text (${j.text.length.toLocaleString()} characters)</summary><pre class="brief" style="margin-top:8px">${esc(j.text)}</pre></details>
+      <div class="inline">
+        <button class="btn sm" data-api="POST /api/memory/jobs/${j.id}/retry" data-then="toast:Queued again|reload">Run again</button>
+        ${canUndo ? `<button class="btn sm danger" data-api="POST /api/queue/jobs/${j.id}/undo" data-confirm="Remove the events and facts this job wrote?" data-then="toast:Undone|reload">Undo this job</button>` : ''}
+      </div>`;
+    body.dataset.loaded = '1';
+  } catch (err) { body.innerHTML = `<span class="small" style="color:var(--red)">${esc(err.message)}</span>`; }
+});
+if (location.hash.startsWith('#job-')) document.querySelector(`[data-detail="${location.hash.slice(5)}"]`)?.click();
+</script>{% endblock %}

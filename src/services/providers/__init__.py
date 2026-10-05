@@ -8,7 +8,7 @@ from src.services.providers.anthropic_provider import AnthropicProvider
 
 PROVIDER_MODELS: dict[str, list[str]] = {
     "groq": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "meta-llama/llama-4-scout-17b-16e-instruct"],
-    "together": ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+    "together": ["deepseek-ai/DeepSeek-V4-Flash-0731", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/Llama-3.3-70B-Instruct-Turbo"],
     "mistral": ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"],
     "cerebras": ["llama3.1-8b", "gpt-oss-120b", "qwen-3-235b-a22b-instruct-2507", "zai-glm-4.7"],
     "openai": ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o"],

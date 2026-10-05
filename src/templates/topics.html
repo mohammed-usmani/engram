@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Topics · Engram{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Topics</h1><div class="sub">The people, companies, projects and themes your events are linked to. Recall uses them to pull everything about a situation at once.</div></div>
+  </header>
+
+  <form method="get" action="/topics" class="inline">
+    <label class="search">{% from "_icons.html" import icon %}{{ icon("search") }}<span class="sr">Search topics</span>
+      <input type="search" name="q" value="{{ q }}" placeholder="Search names and aliases"></label>
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <label class="inline small muted">Sort
+      <select class="select" name="sort" onchange="this.form.submit()">
+        {% for v, l in [("events", "Most events"), ("recent", "Recently active"), ("name", "Name")] %}<option value="{{ v }}" {{ 'selected' if sort == v }}>{{ l }}</option>{% endfor %}
+      </select></label>
+    <button class="btn" type="submit">Search</button>
+  </form>
+  <div class="inline" role="group" aria-label="Kind">
+    {% for k, label, n in chips %}
+      <a class="chip {{ 'on' if kind == k }}" href="/topics?kind={{ k }}&sort={{ sort }}&q={{ q|urlencode }}" style="min-height:34px;font-size:13px">{{ label }} <span style="opacity:.7">{{ n|num }}</span></a>
+    {% endfor %}
+  </div>
+
+  {% if once %}
+  <a href="/cleanup#once" class="callout" style="text-decoration:none;justify-content:space-between;flex-wrap:wrap">
+    <span><b>{{ once|num }} topics have one event or none.</b> Folding them into a parent topic makes recall sharper.</span><b>Open cleanup →</b></a>
+  {% endif %}
+
+  {% if rows %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">
+    {% for t in rows %}
+    <a href="/topics/{{ t.slug }}" class="card stack" style="gap:10px;text-decoration:none;color:var(--ink)">
+      <span class="between"><span style="font-family:var(--serif);font-size:21px;font-weight:600">{{ t.name }}</span><span class="chip">{{ t.kind }}</span></span>
+      <span class="inline small muted" style="gap:14px"><span><b style="color:var(--ink)">{{ t.n }}</b> events</span>{% if t.last %}<span>last {{ t.last|day }}</span>{% endif %}{% if t.dirty %}<span>summary pending</span>{% endif %}</span>
+      <span class="bar" style="height:4px"><span style="width:{{ (t.n / top * 100)|round|int }}%"></span></span>
+      {% if t.slug == me %}<span class="small callout bad" style="padding:8px 10px">This is you. It's never boosted or summarized in briefs.</span>
+      {% elif t.digest %}<span style="font-size:14px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">{{ t.digest }}</span>
+      {% else %}<span class="small muted">No summary yet{{ " (needs 2+ events)" if t.n < 2 }}.</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  <div class="inline" style="justify-content:center">
+    {% if page > 1 %}<a class="btn" href="/topics?q={{ q|urlencode }}&kind={{ kind }}&sort={{ sort }}&page={{ page - 1 }}">Previous</a>{% endif %}
+    {% if more %}<a class="btn" href="/topics?q={{ q|urlencode }}&kind={{ kind }}&sort={{ sort }}&page={{ page + 1 }}">More topics</a>{% endif %}
+  </div>
+  {% else %}<div class="empty">No topics match.</div>{% endif %}
+</div>
+{% endblock %}

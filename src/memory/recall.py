@@ -25,6 +25,7 @@ from src.memory.models import Entity, Episode, MemoryBlock, Reflection, SessionS
 from src.services.ollama_client import embed
 
 from src.dates import format_line, upcoming as upcoming_dates
+from src import settings_store
 
 log = logging.getLogger(__name__)
 
@@ -94,12 +95,16 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
     # 1-hop graph expansion: entities that co-occur with matched ones in ≥2 episodes
     if slugs:
         co = Counter()
+        me = (settings_store.get("recall") or {}).get("self_entity")
         for (ents,) in (await session.execute(
             select(Episode.entities).where(Episode.entities.has_any(array(list(slugs))))
         )).all():
-            co.update(e for e in ents if e not in slugs)
+            co.update(e for e in ents if e not in slugs and e != me)
         slugs |= {e for e, n in co.most_common(2) if n >= 2}
-    return {"entities": sorted(slugs), "weights": weights, "fast": fast}
+    me = (settings_store.get("recall") or {}).get("self_entity")
+    excluded = [me] if me and me in slugs else []
+    slugs -= set(excluded)  # the user is in nearly every event: boosting or summarizing them is noise
+    return {"entities": sorted(slugs), "weights": weights, "fast": fast, "excluded": excluded}
 
 
 # ---------------------------------------------------------------- channels
@@ -223,7 +228,9 @@ def _similar_text(a: str, b: str) -> bool:
 
 
 async def recall(session: AsyncSession, situation: str, budget_tokens: int = 1500,
-                 session_id: str | None = None, fast: bool = False) -> dict:
+                 session_id: str | None = None, fast: bool = False, explain: bool = False) -> dict:
+    """explain=True (the Recall inspector) also returns where the budget went and every candidate's
+    score factors, and doesn't count as the items being served."""
     now = datetime.now(timezone.utc)
     try:
         vec = await embed(situation)
@@ -274,14 +281,23 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
     for it in pool.values():
         it.score = _score(it, plan["weights"], set(slugs), now)
 
-    # pack: pinned first (truncated if they alone blow the budget), then best score per token
+    # pack: pinned first, up to the pinned cap (Settings: room is left for ranked memories),
+    # then best score per token
+    cap = (settings_store.get("recall") or {}).get("pinned_cap")
+    pinned_budget = int(budget_tokens * cap) if cap else budget_tokens
     used = 0
     kept_pinned = []
+    sections = []
     for block in pinned:
-        cost = estimate_tokens(block)
-        if used + cost > budget_tokens:
-            block = block[: max(0, (budget_tokens - used) * 4 - 8)]
-            cost = estimate_tokens(block)
+        full = estimate_tokens(block)
+        cost = full
+        if used + cost > pinned_budget:
+            # only the profile is cut to fit; a summary that doesn't fit whole is left out, not chopped mid-sentence
+            block = block[: max(0, (pinned_budget - used) * 4 - 8)] if not kept_pinned else ""
+            cost = estimate_tokens(block) if block else 0
+        if explain:
+            sections.append({"title": pinned_title(block or pinned[len(sections)]), "tokens": cost, "full": full,
+                             "pinned": True})
         if block:
             kept_pinned.append(block)
             used += cost
@@ -308,10 +324,35 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
             rows.sort(key=lambda c: c.score, reverse=True)
         if rows:
             parts.append(f"## {title}\n" + "\n".join(f"- [{c.id}] {c.text}" for c in rows))
+            if explain:
+                sections.append({"title": title, "tokens": estimate_tokens(parts[-1]), "pinned": False})
     brief = "\n\n".join(parts)
 
+    out = {"brief": brief, "items": [c.id for c in chosen], "plan": plan}
+    if explain:
+        picked = {c.id for c in chosen}
+        ranked = sorted(pool.values(), key=lambda i: i.score, reverse=True)[:40]
+        out["explain"] = {
+            "budget": budget_tokens, "pinned_budget": pinned_budget, "used": estimate_tokens(brief),
+            "sections": sections,
+            "candidates": [{**_factors(it, plan, set(slugs), now), "in_brief": it.id in picked} for it in ranked],
+        }
+        return out
     await _touch(session, [c.id for c in chosen])
-    return {"brief": brief, "items": [c.id for c in chosen], "plan": plan}
+    return out
+
+
+def pinned_title(block: str) -> str:
+    return block.split("\n", 1)[0].removeprefix("## ").strip()
+
+
+def _factors(it: Item, plan: dict, slugs: set[str], now: datetime) -> dict:
+    half = HALF_LIFE_DAYS.get(it.kind)
+    decay = 0.5 ** (max((now - it.when).total_seconds(), 0) / 86400 / half) if half and it.when else 1.0
+    return {"id": it.id, "kind": it.kind, "text": it.text, "score": round(it.score, 5), "rrf": round(it.rrf, 5),
+            "weight": plan["weights"].get(it.kind, 1.0), "importance": it.importance,
+            "confidence": round(it.confidence, 2), "recency": round(decay, 2),
+            "boost": bool(slugs and set(it.entities) & slugs), "tokens": estimate_tokens(it.text)}
 
 
 async def _touch(session: AsyncSession, ids: list[str]) -> None:

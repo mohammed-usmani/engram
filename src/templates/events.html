@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Events · Engram{% endblock %}
+{% block head %}<style>
+  .mix { display: flex; height: 18px; border-radius: 5px; overflow: hidden; background: var(--sunk); }
+  .mix > span { min-width: 2px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .day-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 0 8px; border-bottom: 1px solid var(--line); }
+  .ev { display: flex; gap: 12px; align-items: flex-start; padding: 11px 6px; border-bottom: 1px solid var(--sunk);
+        text-decoration: none; color: var(--ink); border-radius: 6px; }
+  .ev:hover, .ev.sel { background: #FBFAF7; color: var(--ink); }
+  .ev.sel { box-shadow: inset 3px 0 0 var(--blue); }
+  .ev .tm { flex: none; width: 46px; font-size: 12px; color: var(--muted); padding-top: 2px; }
+  .ev .out { font-size: 12px; color: var(--green-ink); }
+  .imp { flex: none; font-size: 12px; color: var(--muted); letter-spacing: 1px; }
+  .filters .select { max-width: 220px; }
+  #panel { position: sticky; top: 20px; }
+</style>{% endblock %}
+
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Events</h1>
+      <div class="sub">Everything that happened, as assistants reported it. {{ total|num }} in total{% if matching != total %}, {{ matching|num }} match these filters{% endif %}.</div></div>
+    <a class="btn" href="/api/events.csv{{ '?' ~ qs if qs }}" download>Export CSV</a>
+  </header>
+
+  <form class="card tight inline filters" method="get" action="/events" role="search">
+    <label class="search">{{ icon("search") }}<span class="sr">Search events</span>
+      <input type="search" name="q" value="{{ f.q }}" placeholder="Search summaries and outcomes"></label>
+    <select class="select" name="kind" aria-label="Kind" onchange="this.form.requestSubmit()">
+      <option value="">All kinds</option>
+      {% for k in kinds %}<option value="{{ k }}" {{ 'selected' if k == f.kind }}>{{ k|kindlabel }}</option>{% endfor %}
+    </select>
+    <input class="input" name="topic" list="topic-list" value="{{ f.topic }}" placeholder="Any topic" aria-label="Topic" style="max-width:200px" onchange="this.form.requestSubmit()">
+    <datalist id="topic-list">{% for slug, name, n in topics %}<option value="{{ slug }}">{{ name }} · {{ n }}</option>{% endfor %}</datalist>
+    <select class="select" name="agent" aria-label="Written by" onchange="this.form.requestSubmit()">
+      <option value="">Any assistant</option>
+      {% for a, n in agents %}<option value="{{ a }}" {{ 'selected' if a == f.agent }}>{{ a }} · {{ n|num }}</option>{% endfor %}
+    </select>
+    <select class="select" name="period" aria-label="Period" onchange="this.form.requestSubmit()">
+      <option value="7" {{ 'selected' if f.period == '7' }}>Last 7 days</option>
+      <option value="30" {{ 'selected' if f.period == '30' }}>Last 30 days</option>
+      <option value="all" {{ 'selected' if f.period == 'all' }}>All time</option>
+    </select>
+    <button class="btn" type="submit">Search</button>
+    {% if qs and qs != 'period=all' %}<a class="btn ghost" href="/events">Clear</a>{% endif %}
+  </form>
+
+  <section class="card stack" style="gap:10px" aria-labelledby="h-mix">
+    <div class="between"><span class="label" id="h-mix">Last 7 days by kind</span><span class="small muted">{{ mix_total|num }} events</span></div>
+    {% if mix_total %}
+    <div class="mix" role="img" aria-label="{% for k, n in mix %}{{ k|kindlabel }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}">
+      {% for k, n in mix %}<span class="k-{{ k }}" style="flex:{{ n }}" title="{{ k|kindlabel }} · {{ n }}"></span>{% endfor %}
+    </div>
+    <div class="inline" style="gap:6px 16px">
+      {% for k, n in mix %}<a class="inline small" style="gap:6px;text-decoration:none;color:var(--ink)" href="/events?kind={{ k }}&period=7"><span class="swatch k-{{ k }}"></span>{{ k|kindlabel }} <span class="muted">{{ n|num }}</span></a>{% endfor %}
+    </div>
+    {% else %}<p class="small muted">Nothing recorded in the last 7 days.</p>{% endif %}
+  </section>
+
+  <div class="row-wrap">
+    <section class="card grow-3" style="padding:6px 18px 12px" aria-label="Events">
+      {% if groups %}
+        {% block rows %}
+        {% for g in groups %}
+          {% if g.header %}<div class="day-head"><h2 style="font-size:18px">{{ g.label }}</h2><span class="small muted">{{ g.n|num }} event{{ 's' if g.n != 1 }}</span></div>{% endif %}
+          {% for e in g.events %}
+          <a class="ev {{ 'sel' if e.id == focus }}" id="e-{{ e.id }}" href="/events?{{ qs ~ '&' if qs }}focus={{ e.id }}#e-{{ e.id }}"
+             hx-get="/events/{{ e.id }}/panel" hx-target="#panel" hx-swap="innerHTML"
+             onclick="document.querySelectorAll('.ev.sel').forEach(x=>x.classList.remove('sel'));this.classList.add('sel')">
+            <span class="tm mono">{{ e.occurred_at|hm }}</span>
+            <span class="kind k-{{ e.kind }}">{{ e.kind|kindlabel }}</span>
+            <span class="stack grow-1" style="gap:3px;flex:1 1 200px">
+              <span style="font-size:14px;line-height:1.45">{{ e.summary }}</span>
+              {% if e.outcome %}<span class="out">→ {{ e.outcome }}</span>{% endif %}
+            </span>
+            <span class="imp" title="importance {{ e.importance }} of 5">{{ e.importance|dots }}</span>
+          </a>
+          {% endfor %}
+        {% endfor %}
+        {% if more %}
+          <button class="btn" style="margin:14px auto 4px;display:flex" hx-get="/events?{{ qs ~ '&' if qs }}offset={{ next_offset }}&prev_day={{ groups[-1].day }}"
+                  hx-target="this" hx-swap="outerHTML">Load more</button>
+        {% endif %}
+        {% endblock %}
+      {% else %}
+        <div class="empty" style="margin:12px 0">No events match. <a href="/events">Clear the filters</a>.</div>
+      {% endif %}
+    </section>
+
+    <aside class="card grow-2 stack" id="panel" aria-label="Event details" aria-live="polite" style="gap:14px">
+      {% if ep %}
+        {% block panel %}
+        {% set imp_words = {1: "1 · trivia", 2: "2 · minor", 3: "3 · normal", 4: "4 · important", 5: "5 · major"} %}
+        <div class="between" style="align-items:center">
+          <span class="mono tiny muted">e:{{ ep.id }} · {{ ep.occurred_at|local_time }}</span>
+          <span class="kind k-{{ ep.kind }}">{{ ep.kind|kindlabel }}</span>
+        </div>
+        <div style="font-family:var(--serif);font-size:22px;line-height:1.35">{{ ep.summary }}</div>
+        <dl class="kv">
+          <dt>Outcome</dt><dd>{{ ep.outcome or "—" }}</dd>
+          <dt>Importance</dt><dd>{{ imp_words.get(ep.importance, ep.importance) }}</dd>
+          <dt>Sentiment</dt><dd>{{ "%.2f"|format(ep.sentiment) if ep.sentiment is not none else "—" }}</dd>
+          <dt>Written by</dt><dd>{{ ep.source_agent or "unknown" }}{% if ep.payload.job %}, from queue job <a href="/queue#job-{{ ep.payload.job }}">#{{ ep.payload.job }}</a>{% endif %}</dd>
+          {% if ep.session_id %}<dt>Session</dt><dd class="mono tiny">{{ ep.session_id }}</dd>{% endif %}
+          <dt>Shown in briefs</dt><dd>{% if ep.access_count %}{{ ep.access_count }} time{{ 's' if ep.access_count != 1 }}, last {{ ep.last_accessed|ago }}{% else %}not yet{% endif %}</dd>
+          <dt>Saved</dt><dd>{{ ep.created_at|local_time }}</dd>
+        </dl>
+        <div class="stack" style="gap:6px">
+          <span class="label">Topics</span>
+          <div class="inline" style="gap:6px">
+            {% for slug in ep.entities %}<a class="chip blue" href="/topics/{{ slug|urlencode }}">{{ ep_topics.get(slug, slug) }}</a>{% else %}<span class="small muted">none</span>{% endfor %}
+          </div>
+        </div>
+        <div class="inline divider" style="padding-top:14px">
+          <button class="btn" type="button" data-open="#edit-event">Edit</button>
+          <button class="btn" type="button" data-open="#date-event">Change date</button>
+          <button class="btn danger" type="button" data-api="DELETE /api/memory/item/e:{{ ep.id }}"
+                  data-confirm="Forget this event for good? Assistants will never see it again." data-then="redirect:/events">Forget</button>
+        </div>
+
+        <dialog id="edit-event" aria-labelledby="h-edit-event">
+          <form class="stack" data-api="PATCH /api/events/{{ ep.id }}" data-then="reload">
+            <h2 id="h-edit-event">Edit event</h2>
+            <label class="field"><span class="label">Summary</span><textarea class="input" name="summary" required>{{ ep.summary }}</textarea></label>
+            <label class="field"><span class="label">Outcome</span><input class="input" name="outcome" maxlength="100" value="{{ ep.outcome or '' }}" data-type="null-empty"></label>
+            <div class="inline">
+              <label class="field"><span class="label">Kind</span>
+                <select class="select" name="kind">{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if k == ep.kind }}>{{ k|kindlabel }}</option>{% endfor %}</select></label>
+              <label class="field"><span class="label">Importance</span>
+                <select class="select" name="importance" data-type="int">{% for i in range(1, 6) %}<option value="{{ i }}" {{ 'selected' if i == ep.importance }}>{{ imp_words[i] }}</option>{% endfor %}</select></label>
+            </div>
+            <p class="small muted">Changing the summary re-embeds it. Its topics are re-summarised on the next sleep pass.</p>
+            <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+          </form>
+        </dialog>
+        <dialog id="date-event" aria-labelledby="h-date-event">
+          <form class="stack" data-api="PATCH /api/events/{{ ep.id }}" data-then="reload">
+            <h2 id="h-date-event">When did it happen?</h2>
+            <label class="field"><span class="label">Date and time ({{ tz }})</span>
+              <input class="input" type="datetime-local" name="occurred_at" value="{{ local_input }}" required></label>
+            <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+          </form>
+        </dialog>
+        {% endblock %}
+      {% else %}
+        <p class="muted small">Pick an event to see everything Engram knows about it, edit it, or forget it.</p>
+      {% endif %}
+    </aside>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Facts · Engram{% endblock %}
+{% block head %}<style>
+  .fact { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--sunk); }
+  .fact .imp { flex: none; font-size: 12px; color: var(--accent); letter-spacing: 1px; padding-top: 3px; }
+  .fact .body { flex: 1 1 400px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .fact .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .old { text-decoration: line-through; color: var(--muted); }
+  .now { padding: 8px 12px; border-radius: 8px; background: var(--green-soft); color: var(--green-ink); font-size: 14px; }
+  ol.profile { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; line-height: 1.45; }
+  ol.profile li { padding: 2px 0; }
+  ol.profile li .inline { gap: 6px; justify-content: space-between; flex-wrap: nowrap; align-items: flex-start; }
+  .pin-mark { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }
+  .pick { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--sunk); font-size: 14px; }
+</style>{% endblock %}
+
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Facts</h1><div class="sub">What Engram believes is true about you, how you like things done, and how you do them.</div></div>
+    <button class="btn primary" type="button" data-open="#add-fact">{{ icon("plus") }}Add a fact</button>
+  </header>
+
+  <nav class="seg" aria-label="Fact kinds" style="align-self:flex-start">
+    {% for k in kinds %}<a href="/facts?kind={{ k }}" class="{{ 'on' if k == kind }}" {% if k == kind %}aria-current="page"{% endif %}>{{ k|capitalize }}s <span class="tiny muted">{{ (counts.get(k) or 0)|num }}</span></a>{% endfor %}
+  </nav>
+
+  <section class="card stack" style="gap:14px" aria-labelledby="h-profile">
+    <div class="between"><h2 id="h-profile">Your profile</h2>
+      <span class="small muted">The top {{ profile|length }} facts open every recall brief · about {{ profile_tokens|num }} tokens. Pinned facts come first.</span></div>
+    {% if suggest %}
+    <div class="callout">{{ icon("warn") }}
+      <div class="stack" style="gap:8px;flex:1">
+        <span><b>{{ suggest.why }}</b>. Combine them into one line to free about {{ suggest.saves }} tokens for other memories.</span>
+        <div class="inline"><button class="btn sm" type="button" data-open="#combine">Review and combine</button></div>
+      </div>
+    </div>
+    {% endif %}
+    {% if profile %}
+    <ol class="profile">
+      {% for p in profile %}
+      <li><div class="inline">
+        <span>{% if p.metadata.pinned %}<span class="pin-mark">Pinned · </span>{% endif %}{{ p.memory }}</span>
+        <button class="btn ghost sm" type="button" data-api="POST /api/facts/{{ p.id }}/pin" data-body='{"pinned": {{ 'false' if p.metadata.pinned else 'true' }}}'
+                data-then="reload">{{ "Unpin" if p.metadata.pinned else "Pin" }}</button>
+      </div></li>
+      {% endfor %}
+    </ol>
+    {% if not suggest and profile|length > 1 %}<div><button class="btn sm ghost" type="button" data-open="#combine">Combine profile facts…</button></div>{% endif %}
+    {% else %}<div class="empty">No facts or preferences yet. Assistants add them as they learn about you.</div>{% endif %}
+  </section>
+
+  <section class="card" style="padding:8px 20px 16px" aria-labelledby="h-list">
+    <div class="between" style="align-items:center;padding:12px 0;border-bottom:1px solid var(--line)">
+      <h2 id="h-list" style="font-size:18px">{{ "Replaced " ~ kind ~ "s" if replaced else (kind|capitalize ~ "s") }}</h2>
+      <form class="inline" method="get" action="/facts" role="search">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <label class="search" style="flex:0 1 280px">{{ icon("search") }}<span class="sr">Search {{ kind }}s</span>
+          <input type="search" name="q" value="{{ q }}" placeholder="Search {{ kind }}s"></label>
+        <label class="inline small" style="min-height:42px"><input type="checkbox" name="replaced" value="1" {{ 'checked' if replaced }} onchange="this.form.submit()">
+          Show replaced ({{ n_replaced|num }})</label>
+      </form>
+    </div>
+    {% if rows %}
+      {% block rows %}
+      {% for r in rows %}
+      <div class="fact" id="f-{{ r.id }}">
+        <span class="imp" title="importance {{ r.importance }} of 5">{{ r.importance|dots }}</span>
+        <div class="body">
+          <span class="{{ 'old' if r.superseded_by }}" style="font-size:15px;line-height:1.5" data-text>{{ r.text }}</span>
+          {% if r.superseded_by %}
+            <span class="now">→ {{ r.replacement or "a fact that has since been forgotten" }}</span>
+          {% endif %}
+          <span class="meta">
+            {% for slug, name in r.topics %}<a class="chip" href="/topics/{{ slug|urlencode }}">{{ name }}</a>{% endfor %}
+            <span>{{ r.agent or "unknown" }}</span><span>·</span><span>{{ r.created|day if r.created else "" }}</span>
+            {% if r.superseded_by %}<span>· replaced {{ r.valid_to|day if r.valid_to else "" }}</span>{% endif %}
+            {% if r.pinned %}<span class="pin-mark">· Pinned</span>{% endif %}
+          </span>
+        </div>
+        <span class="inline" style="gap:6px">
+          {% if r.superseded_by %}
+            <button class="btn sm" type="button" data-api="POST /api/facts/{{ r.id }}/restore" data-then="remove:#f-{{ r.id }}|toast:Restored. It's back in recall.">Restore</button>
+          {% else %}
+            <button class="btn sm" type="button" data-edit-fact="{{ r.id }}" data-importance="{{ r.importance }}">Edit</button>
+            <button class="btn sm" type="button" data-api="POST /api/facts/{{ r.id }}/pin" data-body='{"pinned": {{ 'false' if r.pinned else 'true' }}}' data-then="reload">{{ "Unpin" if r.pinned else "Pin" }}</button>
+          {% endif %}
+          <button class="btn sm danger" type="button" data-api="DELETE /api/memory/item/f:{{ r.id }}"
+                  data-confirm="Forget this fact for good?" data-then="remove:#f-{{ r.id }}|toast:Forgotten">Forget</button>
+        </span>
+      </div>
+      {% endfor %}
+      {% if more %}
+        <button class="btn" style="margin:14px auto 0;display:flex" hx-get="/facts?{{ qs ~ '&' if qs }}offset={{ next_offset }}" hx-target="this" hx-swap="outerHTML">Load more</button>
+      {% endif %}
+      {% endblock %}
+    {% else %}
+      <div class="empty" style="margin-top:14px">{% if q %}Nothing matches “{{ q }}”.{% elif replaced %}No replaced {{ kind }}s.{% else %}No {{ kind }}s yet.{% endif %}</div>
+    {% endif %}
+  </section>
+</div>
+
+<dialog id="edit-fact" aria-labelledby="h-edit-fact">
+  <form class="stack" data-api="PATCH /api/facts/x" data-then="reload">
+    <h2 id="h-edit-fact">Edit fact</h2>
+    <label class="field"><span class="label">Text</span><textarea class="input" name="text" required minlength="3"></textarea></label>
+    <label class="field"><span class="label">Importance</span>
+      <select class="select" name="importance" data-type="int">{% for i in range(1, 6) %}<option value="{{ i }}">{{ i }}</option>{% endfor %}</select></label>
+    <p class="small muted">A new wording is re-embedded, so recall finds it by meaning. Topics, author and pins are kept.</p>
+    <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="add-fact" aria-labelledby="h-add-fact">
+  <form class="stack" data-api="POST /api/facts" data-then="reload">
+    <h2 id="h-add-fact">Add a fact</h2>
+    <label class="field"><span class="label">What's true</span><textarea class="input" name="text" required minlength="3" placeholder="Write it so it still makes sense months from now, e.g. “Prefers FastAPI over Express for new APIs.”"></textarea></label>
+    <div class="inline">
+      <label class="field"><span class="label">Kind</span>
+        <select class="select" name="kind">{% for k in kinds %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ k }}</option>{% endfor %}</select></label>
+      <label class="field"><span class="label">Importance</span>
+        <select class="select" name="importance" data-type="int">{% for i in range(1, 6) %}<option value="{{ i }}" {{ 'selected' if i == 3 }}>{{ i }}</option>{% endfor %}</select></label>
+    </div>
+    <label class="field"><span class="label">Topics (comma-separated)</span><input class="input" name="topics" placeholder="Engram, Job search"></label>
+    <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Add</button></div>
+  </form>
+</dialog>
+
+{% if profile|length > 1 %}
+<dialog id="combine" aria-labelledby="h-combine" style="max-width:min(680px, calc(100vw - 32px))">
+  <form class="stack" data-api="POST /api/facts/combine" data-then="reload">
+    <h2 id="h-combine">Combine profile facts</h2>
+    <p class="small muted">Tick the facts to merge and write the one sentence that replaces them. The old ones are kept as replaced (you can restore them), and the new one gets all their topics.</p>
+    <div>
+      {% for p in profile %}
+      <label class="pick"><input type="checkbox" name="ids" value="{{ p.id }}" data-multi {{ 'checked' if suggest and p.id in suggest.ids }}>
+        <span>{{ p.memory }}</span></label>
+      {% endfor %}
+    </div>
+    <label class="field"><span class="label">Combined sentence</span><textarea class="input" name="text" required minlength="3" style="min-height:90px">{% if suggest %}{% for p in profile if p.id in suggest.ids %}{{ p.memory }}{{ " " if not loop.last }}{% endfor %}{% endif %}</textarea></label>
+    <label class="field"><span class="label">Importance</span>
+      <select class="select" name="importance" data-type="int" style="max-width:240px"><option value="">Highest of the ticked facts</option>{% for i in range(1, 6) %}<option value="{{ i }}">{{ i }}</option>{% endfor %}</select></label>
+    <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Combine</button></div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}<script>
+  // One edit dialog for every row: point it at the clicked fact.
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-edit-fact]');
+    if (!b) return;
+    const d = document.getElementById('edit-fact'), form = d.querySelector('form');
+    form.dataset.api = 'PATCH /api/facts/' + b.dataset.editFact;
+    form.elements.text.value = b.closest('.fact').querySelector('[data-text]').textContent;
+    form.elements.importance.value = b.dataset.importance;
+    d.showModal();
+  });
+</script>{% endblock %}

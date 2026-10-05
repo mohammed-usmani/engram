@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Lessons · Engram{% endblock %}
+{% block head %}<style>
+  .hist { display: flex; align-items: flex-end; gap: 10px; height: 120px; }
+  .hist > div { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
+  .hist .b { width: 100%; border-radius: 4px 4px 0 0; background: var(--blue); min-height: 2px; }
+  .hist-labels { display: flex; gap: 10px; } .hist-labels span { flex: 1; text-align: center; font-size: 11px; color: var(--muted); }
+  .lesson summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .lesson summary::-webkit-details-marker { display: none; }
+  .lesson summary .more { font-size: 14px; color: var(--blue); }
+  .lesson[open] summary .more::after { content: " ▴"; } .lesson summary .more::after { content: " ▾"; }
+  .ev-link { display: flex; gap: 12px; align-items: baseline; padding: 8px 10px; border-radius: 7px; background: var(--paper);
+             text-decoration: none; color: var(--ink); font-size: 14px; }
+  .ev-link:hover { background: var(--sunk); color: var(--ink); }
+</style>{% endblock %}
+
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Lessons</h1>
+      <div class="sub">Patterns the sleep pass found across your events. Each one cites the events behind it. Tell Engram when one is wrong, and it won't come back.</div></div>
+  </header>
+
+  <div class="row-wrap">
+    <section class="card stack grow-1" aria-labelledby="h-hist">
+      <span class="label" id="h-hist">Confidence of all {{ total|num }} lessons</span>
+      <div class="hist" role="img" aria-label="{% for h in hist %}{{ h.label }}: {{ h.n }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for h in hist %}<div><span class="tiny" style="font-weight:500">{{ h.n|num }}</span><span class="b" style="height:{{ (h.n / hist_max * 90)|round(0) }}px"></span></div>{% endfor %}
+      </div>
+      <div class="hist-labels">{% for h in hist %}<span>{{ h.label }}</span>{% endfor %}</div>
+    </section>
+    <section class="card stack grow-2" style="justify-content:center" aria-labelledby="h-filter">
+      <span class="label" id="h-filter">Find lessons</span>
+      <p class="small muted">A lesson shows up in recall only when one of its topics matches the situation. Mark it right to make it count fully, or wrong to delete it and keep it from coming back.</p>
+      <form class="inline" method="get" action="/lessons">
+        <label class="inline small">Topic
+          <select class="select" name="topic" onchange="this.form.submit()" style="max-width:260px">
+            <option value="">All topics</option>
+            {% for slug, name, n in topics %}<option value="{{ slug }}" {{ 'selected' if slug == topic }}>{{ name }} · {{ n }}</option>{% endfor %}
+          </select></label>
+        <label class="inline small">Sort
+          <select class="select" name="sort" onchange="this.form.submit()">
+            {% for k, label in sorts.items() %}<option value="{{ k }}" {{ 'selected' if k == sort }}>{{ label }}</option>{% endfor %}
+          </select></label>
+        <noscript><button class="btn" type="submit">Apply</button></noscript>
+      </form>
+    </section>
+  </div>
+
+  <section class="stack" style="gap:10px" aria-label="Lessons">
+    {% for r in lessons %}
+    <details class="card lesson" id="r-{{ r.id }}" style="padding:16px 20px"
+             hx-get="/lessons/{{ r.id }}/evidence" hx-trigger="toggle once" hx-target="find .evidence">
+      <summary>
+        <span class="stack" style="flex:1 1 480px;gap:6px">
+          <span style="font-size:15px;line-height:1.5">{{ r.lesson }}</span>
+          <span class="inline tiny muted" style="gap:10px">
+            {% for slug in r.entities %}<span class="chip">{{ names.get(slug, slug) }}</span>{% endfor %}
+            <span>{{ r.evidence|length }} event{{ 's' if r.evidence|length != 1 }}</span>
+            <span>confidence {{ "%.2f"|format(r.confidence) }}</span>
+            <span>updated {{ r.updated_at|day }}</span>
+          </span>
+        </span>
+        <span class="more">See evidence</span>
+      </summary>
+      <div class="evidence stack" style="margin-top:14px"><span class="small muted">Loading…</span></div>
+    </details>
+    {% else %}
+    <div class="empty">{% if topic %}No lessons about this topic. <a href="/lessons">Show all</a>.{% else %}No lessons yet. They appear after the sleep pass sees a pattern in at least two events.{% endif %}</div>
+    {% endfor %}
+  </section>
+
+  {% if pages > 1 %}
+  <nav class="between" aria-label="Pages">
+    {% if page > 1 %}<a class="btn" href="/lessons?{{ qs ~ '&' if qs }}page={{ page - 1 }}">← Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small muted">Page {{ page }} of {{ pages }} · {{ matching|num }} lessons</span>
+    {% if page < pages %}<a class="btn" href="/lessons?{{ qs ~ '&' if qs }}page={{ page + 1 }}">Next →</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block evidence %}
+<span class="label">Based on {{ r.evidence|length }} event{{ 's' if r.evidence|length != 1 }}</span>
+<div class="stack" style="gap:4px">
+  {% for e in eps %}
+  <a class="ev-link" href="/events?focus={{ e.id }}#e-{{ e.id }}">
+    <span class="mono tiny muted" style="flex:none;width:52px">e:{{ e.id }}</span>
+    <span style="flex:1">{{ e.summary }}</span>
+    <span class="tiny muted" style="flex:none">{{ e.kind|kindlabel }} · {{ e.occurred_at|day }}</span>
+  </a>
+  {% endfor %}
+  {% if missing %}<span class="small muted">{{ missing }} supporting event{{ 's were' if missing != 1 else ' was' }} forgotten since.</span>{% endif %}
+</div>
+<div class="inline divider" style="padding-top:14px">
+  <button class="btn" type="button" data-api="POST /api/lessons/{{ r.id }}/confirm" data-then="reload"
+          {% if r.confidence >= 1 %}disabled title="Already confirmed"{% endif %}>Right</button>
+  <button class="btn" type="button" data-open="#reword-{{ r.id }}">Reword</button>
+  <button class="btn danger" type="button" data-api="POST /api/lessons/{{ r.id }}/reject"
+          data-confirm="Delete this lesson? The sleep pass won't bring back anything close to it." data-then="remove:#r-{{ r.id }}|toast:Gone, and it won't come back">Wrong, forget it</button>
+</div>
+<dialog id="reword-{{ r.id }}" aria-labelledby="h-reword-{{ r.id }}">
+  <form class="stack" data-api="PATCH /api/lessons/{{ r.id }}" data-then="reload">
+    <h2 id="h-reword-{{ r.id }}">Reword lesson</h2>
+    <textarea class="input" name="lesson" required minlength="10">{{ r.lesson }}</textarea>
+    <div class="inline" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+{% endblock %}

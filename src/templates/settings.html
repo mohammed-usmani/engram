@@ -1,327 +1,223 @@
 {% extends "base.html" %}
-{% block title %}Settings — Context{% endblock %}
-
-{% block extra_css %}
-  .settings-header {
-    margin-bottom: 1.5rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .settings-header p {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    margin-top: 0.4rem;
-  }
-  .provider-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 1.2rem;
-  }
-  .provider-card {
-    background: #fff;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.2rem;
-    position: relative;
-  }
-  .provider-card.active-card {
-    border-color: var(--accent);
-  }
-  .provider-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.8rem;
-  }
-  .provider-card h2 {
-    font-size: 1rem;
-    margin-bottom: 0;
-    text-transform: capitalize;
-    font-family: var(--font-heading);
-  }
-  .status-badge {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    padding: 0.15rem 0.5rem;
-    border-radius: 20px;
-    font-weight: 600;
-  }
-  .badge-active {
-    background: #d4edda;
-    color: #155724;
-  }
-  .badge-inactive {
-    background: var(--bg-alt);
-    color: var(--text-muted);
-  }
-  .card-field {
-    margin-top: 0.8rem;
-  }
-  .card-field label {
-    margin-top: 0;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    margin-bottom: 0.25rem;
-  }
-  .card-field input, .card-field select {
-    font-size: 0.85rem;
-    padding: 0.4rem 0.5rem;
-  }
-  .key-row {
-    display: flex;
-    gap: 0.4rem;
-  }
-  .key-row input { flex: 1; }
-  .key-toggle {
-    font-size: 0.75rem;
-    padding: 0.4rem 0.6rem;
-    white-space: nowrap;
-    flex-shrink: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: #fff;
-    cursor: pointer;
-    color: var(--text-muted);
-  }
-  .key-toggle:hover { background: var(--bg-alt); }
-  .card-actions {
-    margin-top: 1rem;
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-  .card-actions button {
-    font-size: 0.82rem;
-    padding: 0.4rem 0.9rem;
-  }
-  .save-status {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-  .save-status.ok { color: #155724; }
-  .save-status.err { color: #c33; }
-  #loading-state {
-    color: var(--text-muted);
-    font-style: italic;
-    padding: 2rem 0;
-  }
-{% endblock %}
-
+{% block title %}Settings · Engram{% endblock %}
+{% macro step_select(name, selected, allow_empty, empty_label, aria) -%}
+<select class="select" name="{{ name }}" data-multi data-type="step" aria-label="{{ aria }}" style="max-width:300px">
+  {% if allow_empty %}<option value="">{{ empty_label }}</option>{% endif %}
+  {% for o in options %}<option value="{{ o.value }}" {{ 'selected' if o.value == selected }}>{{ o.label }}</option>{% endfor %}
+</select>
+{%- endmacro %}
 {% block body %}
-<div class="settings-header">
-  <h1>Settings</h1>
-  <p>Configure LLM providers. Add API keys to activate cloud providers.</p>
-</div>
+<div class="wrap narrow">
+  <header class="page-head">
+    <div><h1>Settings</h1><div class="sub">Who can reach Engram, which models it uses, and where your backups go.</div></div>
+  </header>
 
-<div id="loading-state">Loading providers…</div>
-<div class="provider-grid" id="provider-grid" style="display:none"></div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-const PROVIDER_LABELS = {
-  ollama: 'Ollama (local)',
-  groq: 'Groq',
-  cerebras: 'Cerebras',
-  openai: 'OpenAI',
-  gemini: 'Google Gemini',
-  claude: 'Anthropic Claude',
-};
-
-let providerModels = {};
-
-async function loadSettings() {
-  try {
-    const [provRes] = await Promise.all([
-      fetch('/api/settings/providers'),
-    ]);
-    const providers = await provRes.json();
-
-    // Fetch models for each provider in parallel
-    await Promise.all(providers.map(async (prov) => {
-      try {
-        const mr = await fetch(`/api/settings/providers/${prov.provider}/models`);
-        if (mr.ok) {
-          const md = await mr.json();
-          providerModels[prov.provider] = md.models || [];
-        }
-      } catch (_) {
-        providerModels[prov.provider] = [];
-      }
-    }));
-
-    renderCards(providers);
-  } catch (e) {
-    document.getElementById('loading-state').textContent = 'Failed to load providers: ' + e.message;
-  }
-}
-
-function renderCards(providers) {
-  document.getElementById('loading-state').style.display = 'none';
-  const grid = document.getElementById('provider-grid');
-  grid.style.display = 'grid';
-  grid.innerHTML = providers.map(p => buildCard(p)).join('');
-}
-
-function buildCard(prov) {
-  const label = PROVIDER_LABELS[prov.provider] || prov.provider;
-  const models = providerModels[prov.provider] || [];
-  const isOllama = prov.provider === 'ollama';
-  const badgeClass = prov.is_active ? 'badge-active' : 'badge-inactive';
-  const badgeText = prov.is_active ? 'Active' : 'Inactive';
-  const cardClass = prov.is_active ? 'provider-card active-card' : 'provider-card';
-
-  // API key section (not for ollama)
-  const keySection = isOllama ? '' : `
-    <div class="card-field">
-      <label>API Key</label>
-      <div class="key-row">
-        <input type="password" id="key-${prov.provider}"
-          placeholder="${prov.api_key_set ? '●●●●●●●● (set)' : 'Enter API key…'}"
-          autocomplete="new-password">
-        <button class="key-toggle" onclick="toggleKey('${prov.provider}')">Show</button>
+  {# ------------------------------------------------ models per job #}
+  <section class="card stack" aria-labelledby="h-jobs">
+    <div class="between"><h2 id="h-jobs">Which model does what</h2><span class="small muted">Changes apply to the next job. No restart.</span></div>
+    <form data-api="PUT /api/settings/models" data-then="reload" data-body='{"chat":[],"extract":[],"consolidate":[],"plan":[],"reconcile":[]}' class="stack" style="gap:0">
+      {% for t in tasks %}
+      {% set sel = (t.saved or t.effective) %}
+      <div class="settings-row">
+        <div class="stack" style="flex:1 1 260px;gap:2px">
+          <span style="font-weight:600">{{ t.label }}</span>
+          <span class="small muted">
+            {% if t.task == 'chat' %}Default for Ask Engram. Each conversation can still switch from its composer.
+            {% elif t.task == 'extract' %}Turns what assistants send into events and facts. Tried in order; the next is used if one fails.
+            {% elif t.task == 'consolidate' %}The sleep pass: topic summaries and lessons.
+            {% elif t.task == 'plan' %}Optional step that picks topics for a recall. Fast recalls skip it.
+            {% else %}Decides whether a new fact repeats or replaces an old one.{% endif %}
+            {% if not t.saved and t.effective %}<br>Now: {% for s in t.effective %}{{ s.provider }} · {{ s.model }}{{ " → " if not loop.last }}{% endfor %}{% if t.task == 'extract' %} (from .env){% endif %}{% endif %}
+          </span>
+        </div>
+        <div class="inline">
+          {% if t.task == 'chat' %}
+            {{ step_select('chat', (sel[0].provider ~ '|' ~ sel[0].model) if sel else '', false, '', 'Chat model') }}
+          {% elif t.task == 'extract' %}
+            {% for i in range(3) %}
+              {% set s = sel[i] if sel|length > i else none %}
+              <span class="inline" style="flex-wrap:nowrap;gap:6px"><span class="mono tiny muted">{{ i + 1 }}</span>
+              {{ step_select('extract', (s.provider ~ '|' ~ s.model) if s else '', i > 0, '— none —', 'Extraction model ' ~ (i + 1)) }}</span>
+            {% endfor %}
+          {% else %}
+            {% set s = t.saved[0] if t.saved else none %}
+            {{ step_select(t.task, (s.provider ~ '|' ~ (s.model or '')) if s else '', true, 'Same as extraction', t.label ~ ' model') }}
+          {% endif %}
+        </div>
       </div>
-    </div>`;
-
-  // Model dropdown or input
-  const modelSection = models.length > 0 ? `
-    <div class="card-field">
-      <label>Model</label>
-      <select id="model-${prov.provider}">
-        ${models.map(m => `<option value="${escapeAttr(m)}" ${m === prov.model ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}
-      </select>
-    </div>` : `
-    <div class="card-field">
-      <label>Model</label>
-      <input type="text" id="model-${prov.provider}"
-        value="${escapeAttr(prov.model || '')}"
-        placeholder="e.g. mistral:latest">
-    </div>`;
-
-  // Base URL (ollama + openai-compat providers)
-  const urlSection = (isOllama || prov.base_url) ? `
-    <div class="card-field">
-      <label>Base URL</label>
-      <input type="text" id="url-${prov.provider}"
-        value="${escapeAttr(prov.base_url || '')}"
-        placeholder="http://localhost:11434">
-    </div>` : '';
-
-  // Active toggle
-  const activeToggle = !isOllama ? `
-    <div class="card-field" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.8rem;">
-      <input type="checkbox" id="active-${prov.provider}" ${prov.is_active ? 'checked' : ''}
-        style="width:auto">
-      <label for="active-${prov.provider}" style="margin-top:0;font-size:0.82rem;">Enabled</label>
-    </div>` : '';
-
-  return `<div class="${cardClass}" id="card-${prov.provider}">
-    <div class="provider-card-header">
-      <h2>${escapeHtml(label)}</h2>
-      <span class="status-badge ${badgeClass}" id="badge-${prov.provider}">${badgeText}</span>
+      {% endfor %}
+      <div class="settings-row">
+        <span class="small muted">Only providers with a key are listed. Add keys below.</span>
+        <button class="btn primary" type="submit">Save models</button>
+      </div>
+    </form>
+    <div class="settings-row">
+      <div class="stack" style="flex:1 1 360px;gap:2px">
+        <span style="font-weight:600">Batch mode for extraction</span>
+        <span class="small muted">Sends the queue to Together's Batch API on {{ batch.model }}. Your bill showed no discount, so it costs more than live.</span>
+      </div>
+      {% if batch.on %}
+        <button class="btn" data-api="POST /api/memory/batch-mode" data-body='{"on": false}'>Turn off</button>
+      {% else %}
+        <button class="btn" data-api="POST /api/memory/batch-mode" data-body='{"on": true}' {{ 'disabled' if not batch.available }}
+                data-confirm="Batch mode switches extraction to {{ batch.model }} and billed at full price last time. Turn it on?">Turn on</button>
+      {% endif %}
     </div>
-    ${keySection}
-    ${modelSection}
-    ${urlSection}
-    ${activeToggle}
-    <div class="card-actions">
-      <button class="btn-primary" onclick="saveProvider('${prov.provider}')">Save</button>
-      <span class="save-status" id="status-${prov.provider}"></span>
+    <form class="settings-row" data-api="PUT /api/settings/worker" data-then="toast:Saved">
+      <div class="stack" style="flex:1 1 300px;gap:2px"><span style="font-weight:600">Sleep pass</span><span class="small muted">How often topic summaries and lessons are refreshed</span></div>
+      <div class="inline">
+        <label class="inline small">Every
+          <select class="select" name="consolidate_every_h" data-type="float">
+            {% for h in [3, 6, 12, 24] %}<option value="{{ h }}" {{ 'selected' if worker.consolidate_every_h == h }}>{{ h }} hours</option>{% endfor %}
+          </select></label>
+        <button class="btn sm" type="submit">Save</button>
+        <button class="btn sm" type="button" data-api="POST /api/memory/consolidate" data-then="toast:Summary pass requested">Run now</button>
+      </div>
+    </form>
+  </section>
+
+  {# ------------------------------------------------ providers #}
+  <section class="card stack" aria-labelledby="h-prov">
+    <div class="between"><h2 id="h-prov">Providers</h2>
+      <span class="small muted">{% if remote %}Keys can only be changed from the computer Engram runs on.{% else %}Keys are never shown again after saving.{% endif %}</span></div>
+    {% for p in providers %}
+    <div class="settings-row" id="prov-{{ p.provider }}" style="align-items:flex-start">
+      <div style="flex:1 1 220px" class="stack" style="gap:4px">
+        <span class="inline" style="gap:8px"><span style="font-weight:600">{{ p.label }}</span>
+          {% if p.key_source == 'local' %}<span class="chip blue">Local</span>
+          {% elif p.key_source == 'saved' %}<span class="chip green">Key saved here</span>
+          {% elif p.key_source == 'env' %}<span class="chip green">Key from .env</span>
+          {% else %}<span class="chip">No key</span>{% endif %}</span>
+        <span class="small muted">{{ p.used_for | join(" · ") if p.used_for else "Not used" }}</span>
+        <span class="small" data-test-result></span>
+      </div>
+      <div class="inline" style="flex:2 1 420px;justify-content:flex-end">
+        <form class="inline" data-api="PUT /api/settings/providers/{{ p.provider }}" data-then="reload">
+          <label class="inline small muted">Model
+            <select class="select" name="model" style="max-width:240px">
+              {% for m in p.models %}<option value="{{ m }}" {{ 'selected' if m == p.effective_model }}>{{ m }}</option>{% endfor %}
+              {% if not p.models %}<option value="">(none found)</option>{% endif %}
+            </select></label>
+          <button class="btn sm" type="submit">Set</button>
+        </form>
+        {% if p.provider != 'ollama' and not remote %}
+          <button class="btn sm" data-open="#key-{{ p.provider }}">{{ "Replace key" if p.api_key_set else "Add key" }}</button>
+        {% endif %}
+        <button class="btn sm" data-api="POST /api/settings/providers/{{ p.provider }}/test" data-then="event" {{ 'disabled' if not p.api_key_set }}>Test</button>
+      </div>
+      {% if p.provider != 'ollama' and not remote %}
+      <dialog id="key-{{ p.provider }}" aria-labelledby="key-h-{{ p.provider }}">
+        <form class="stack" data-api="PUT /api/settings/providers/{{ p.provider }}" data-then="reload">
+          <h3 id="key-h-{{ p.provider }}">{{ p.label }} API key</h3>
+          <p class="small muted">Saved in Engram's database (inside your encrypted backups). It overrides any key in .env. Leave empty and save to remove the saved key.</p>
+          <label class="field"><span class="label">Key</span><input class="input" type="password" name="api_key" autocomplete="off"></label>
+          <label class="field"><span class="label">Custom base URL (optional, OpenAI-compatible)</span><input class="input" name="base_url" value="{{ p.base_url or '' }}"></label>
+          <div class="inline" style="justify-content:flex-end"><button class="btn" data-close type="button">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+        </form>
+      </dialog>
+      {% endif %}
     </div>
-  </div>`;
-}
+    {% endfor %}
+    <p class="small muted">Embeddings stay on Ollama ({{ "nomic-embed-text" }}): changing them means re-embedding all memory.</p>
+  </section>
 
-function toggleKey(name) {
-  const input = document.getElementById(`key-${name}`);
-  const btn = input.nextElementSibling;
-  if (input.type === 'password') {
-    input.type = 'text';
-    btn.textContent = 'Hide';
-  } else {
-    input.type = 'password';
-    btn.textContent = 'Show';
-  }
-}
+  {# ------------------------------------------------ recall #}
+  <section class="card stack" aria-labelledby="h-recall">
+    <h2 id="h-recall">Recall</h2>
+    <form data-api="PUT /api/settings/recall" data-then="toast:Recall settings saved" class="stack" style="gap:0">
+      <div class="settings-row">
+        <div class="stack" style="flex:1 1 300px;gap:2px"><span style="font-weight:600">You are</span><span class="small muted">This topic is never boosted or summarized in briefs: your profile already covers you.</span></div>
+        <select class="select" name="self_entity" data-type="null-empty">
+          <option value="">Not set</option>
+          {% for p in people %}<option value="{{ p.slug }}" {{ 'selected' if recall.self_entity == p.slug }}>{{ p.name }} · {{ p.n }} events</option>{% endfor %}
+        </select>
+      </div>
+      <div class="settings-row">
+        <div class="stack" style="flex:1 1 300px;gap:2px"><span style="font-weight:600">Pinned text limit</span><span class="small muted">The most of a brief that the profile and topic summaries may use, leaving room for real memories.</span></div>
+        <select class="select" name="pinned_cap" data-type="float">
+          {% for v, l in [(0.3, "30%"), (0.5, "50%"), (0.7, "70%"), ("", "No limit")] %}<option value="{{ v }}" {{ 'selected' if recall.pinned_cap == v or (v == '' and recall.pinned_cap is none) }}>{{ l }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="settings-row"><span></span><button class="btn primary" type="submit">Save recall settings</button></div>
+    </form>
+  </section>
 
-async function saveProvider(name) {
-  const statusEl = document.getElementById(`status-${name}`);
-  statusEl.textContent = 'Saving…';
-  statusEl.className = 'save-status';
+  {# ------------------------------------------------ access #}
+  <section class="card stack" aria-labelledby="h-access">
+    <h2 id="h-access">Access</h2>
+    <div class="settings-row">
+      <div class="stack" style="flex:1 1 360px;gap:2px">
+        <span style="font-weight:600">Public link</span>
+        <span class="mono small">{{ link.url or "PUBLIC_URL not set" }}</span>
+        <span class="small muted">Through Tailscale Funnel. ChatGPT needs it; local-only documents are hidden from it.</span>
+      </div>
+      <div class="inline">
+        {% if link.on %}<span class="chip green">On</span>{% else %}<span class="chip">Off</span>{% endif %}
+        {% if link.available and not remote %}
+          {% if link.on %}<button class="btn sm" data-api="POST /api/system/public-link" data-body='{"on": false}' data-confirm="ChatGPT and other web assistants will lose access until you turn it back on. Turn off?">Turn off</button>
+          {% else %}<button class="btn sm" data-api="POST /api/system/public-link" data-body='{"on": true}'>Turn on</button>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+    {% for a in apps %}
+    <div class="settings-row">
+      <div class="stack" style="gap:2px"><span style="font-weight:600">{{ a.name }}</span><span class="small muted">Connected with OAuth{% if not a.connected %} · no live session{% endif %}</span></div>
+      {% if not remote %}<button class="btn sm danger" data-api="DELETE /api/system/apps/{{ a.client_id }}" data-confirm="Disconnect {{ a.name }}? It will have to be approved again.">Disconnect</button>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="settings-row">
+      <div class="stack" style="gap:2px"><span style="font-weight:600">Claude Code</span><span class="small muted">Local MCP · session hook · transcript sync every 10 minutes</span></div>
+      <span class="chip green">Local</span>
+    </div>
+    {% if not remote %}
+    <div class="settings-row">
+      <div class="stack" style="gap:2px"><span style="font-weight:600">Admin token</span><span class="mono small muted" id="token-view">••••••••••••••••</span></div>
+      <div class="inline">
+        <button class="btn sm" id="token-show">Show</button>
+        <button class="btn sm" id="token-rotate">Replace</button>
+      </div>
+    </div>
+    {% endif %}
+  </section>
 
-  const payload = {};
-
-  // API key (if field exists and has a value)
-  const keyEl = document.getElementById(`key-${name}`);
-  if (keyEl && keyEl.value.trim()) {
-    payload.api_key = keyEl.value.trim();
-  }
-
-  // Model
-  const modelEl = document.getElementById(`model-${name}`);
-  if (modelEl) {
-    payload.model = modelEl.tagName === 'SELECT'
-      ? modelEl.options[modelEl.selectedIndex].value
-      : modelEl.value.trim() || null;
-  }
-
-  // Base URL
-  const urlEl = document.getElementById(`url-${name}`);
-  if (urlEl && urlEl.value.trim()) {
-    payload.base_url = urlEl.value.trim();
-  }
-
-  // Active toggle
-  const activeEl = document.getElementById(`active-${name}`);
-  if (activeEl) {
-    payload.is_active = activeEl.checked;
-  }
-
-  try {
-    const r = await fetch(`/api/settings/providers/${name}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || 'Request failed');
-
-    // Update UI state
-    const badge = document.getElementById(`badge-${name}`);
-    const card = document.getElementById(`card-${name}`);
-    if (data.is_active) {
-      badge.textContent = 'Active';
-      badge.className = 'status-badge badge-active';
-      card.className = 'provider-card active-card';
-    } else {
-      badge.textContent = 'Inactive';
-      badge.className = 'status-badge badge-inactive';
-      card.className = 'provider-card';
-    }
-
-    statusEl.textContent = 'Saved';
-    statusEl.className = 'save-status ok';
-    setTimeout(() => { statusEl.textContent = ''; }, 3000);
-
-    // Clear key field after save
-    if (keyEl) keyEl.value = '';
-  } catch (e) {
-    statusEl.textContent = 'Error: ' + e.message;
-    statusEl.className = 'save-status err';
-  }
-}
-
-function escapeHtml(text) {
-  const d = document.createElement('div');
-  d.textContent = text || '';
-  return d.innerHTML;
-}
-
-function escapeAttr(text) {
-  return (text || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-loadSettings();
+  {# ------------------------------------------------ backups #}
+  <section class="card stack" aria-labelledby="h-backup">
+    <h2 id="h-backup">Backups</h2>
+    <div class="settings-row">
+      <div class="stack" style="flex:1 1 360px;gap:2px">
+        <span style="font-weight:600">Last backup: {{ backup|ago if backup else "none found" }}</span>
+        <span class="small muted">Encrypted with your age key and pushed to the private engram-data repo. Daily at 02:30; the newest 14 are kept.</span>
+      </div>
+      <button class="btn sm" data-api="POST /api/system/backup" data-then="reload">Back up now</button>
+    </div>
+    <div class="settings-row">
+      <div class="stack" style="flex:1 1 360px;gap:2px">
+        <span style="font-weight:600">Recovery key</span>
+        {% if flags.recovery_key_saved %}<span class="small muted">You confirmed ~/.config/engram/backup.key is saved in a password manager.</span>
+        {% else %}<span class="small" style="color:var(--red)">Not confirmed saved. Without ~/.config/engram/backup.key, backups can't be restored.</span>{% endif %}
+      </div>
+      {% if not flags.recovery_key_saved %}<button class="btn sm" data-api="PUT /api/settings/flags" data-body='{"recovery_key_saved": true}'>I've saved it</button>{% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('engram:done', (e) => {
+  const row = e.target.closest('[id^="prov-"]');
+  if (!row || !e.detail || !('ok' in e.detail)) return;
+  const out = row.querySelector('[data-test-result]');
+  out.textContent = e.detail.ok ? `Works · ${e.detail.model} · ${e.detail.ms} ms` : `Failed: ${e.detail.error}`;
+  out.style.color = e.detail.ok ? 'var(--green)' : 'var(--red)';
+});
+const view = document.getElementById('token-view');
+document.getElementById('token-show')?.addEventListener('click', async () => {
+  try { view.textContent = (await Engram.api('GET', '/api/system/admin-token')).token; } catch (err) { Engram.toast(err.message, 'error'); }
+});
+document.getElementById('token-rotate')?.addEventListener('click', async () => {
+  if (!confirm('Replace the admin token? Browsers signed in through the public link will need the new one.')) return;
+  try { view.textContent = (await Engram.api('POST', '/api/system/admin-token/rotate')).token; Engram.toast('New token saved to .env and ~/.config/engram/admin_token'); }
+  catch (err) { Engram.toast(err.message, 'error'); }
+});
 </script>
 {% endblock %}

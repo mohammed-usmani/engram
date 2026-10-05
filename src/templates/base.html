@@ -1,187 +1,66 @@
-<!doctype html>
+{% from "_icons.html" import icon %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Engram{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,600&display=swap" rel="stylesheet">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/engram.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <style>
-    :root {
-      --bg: #faf8f5;
-      --bg-alt: #f0ede8;
-      --text: #1a1a1a;
-      --text-muted: #888;
-      --accent: #c4a882;
-      --accent-light: #e8ddd0;
-      --border: #ddd;
-      --border-strong: #1a1a1a;
-      --font-heading: Georgia, 'Times New Roman', serif;
-      --font-body: system-ui, -apple-system, sans-serif;
-      --radius: 4px;
-      --max-width: 1100px;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    header {
-      padding: 1.2rem 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 2px solid var(--border-strong);
-    }
-    .logo {
-      font-family: var(--font-heading);
-      font-size: 1.4rem;
-      font-weight: 700;
-      font-style: italic;
-      color: var(--text);
-      text-decoration: none;
-    }
-    nav { display: flex; gap: 1.5rem; }
-    nav a {
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      text-decoration: none;
-      padding-bottom: 2px;
-      transition: color 0.2s, border-color 0.2s;
-    }
-    nav a:hover { color: var(--text); }
-    nav a.active {
-      color: var(--text);
-      border-bottom: 2px solid var(--border-strong);
-    }
-    main {
-      padding: 1.5rem 2rem;
-    }
-    main.contained {
-      max-width: var(--max-width);
-      margin: 0 auto;
-    }
-    h1 {
-      font-family: var(--font-heading);
-      font-size: 1.8rem;
-      font-weight: 700;
-      margin-bottom: 1rem;
-    }
-    h2 {
-      font-family: var(--font-heading);
-      font-size: 1.3rem;
-      font-weight: 700;
-      margin-bottom: 0.8rem;
-    }
-    table { width: 100%; border-collapse: collapse; }
-    th {
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      padding: 0.5rem 0.6rem;
-      border-bottom: 2px solid var(--border-strong);
-      text-align: left;
-    }
-    td {
-      padding: 0.6rem;
-      border-bottom: 1px solid var(--border);
-      vertical-align: top;
-      font-size: 0.9rem;
-      line-height: 1.5;
-    }
-    tr:hover { background: var(--bg-alt); }
-    label { display: block; margin-top: 1rem; font-weight: 600; font-size: 0.85rem; }
-    input[type=text], input[type=password], select, textarea {
-      width: 100%;
-      padding: 0.5rem 0.6rem;
-      font: inherit;
-      font-size: 0.9rem;
-      box-sizing: border-box;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: #fff;
-    }
-    input:focus, textarea:focus, select:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-    textarea {
-      min-height: 200px;
-      font-family: ui-monospace, 'Cascadia Code', monospace;
-      font-size: 0.85rem;
-    }
-    button, .btn {
-      padding: 0.5rem 1rem;
-      font: inherit;
-      font-size: 0.85rem;
-      cursor: pointer;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: #fff;
-      color: var(--text);
-      transition: background 0.2s;
-    }
-    button:hover, .btn:hover { background: var(--bg-alt); }
-    .btn-primary {
-      background: var(--border-strong);
-      color: var(--bg);
-      border-color: var(--border-strong);
-    }
-    .btn-primary:hover { background: #333; }
-    .btn-danger { color: #c33; border-color: #c33; }
-    .btn-danger:hover { background: #fdd; }
-    .banner {
-      background: var(--bg-alt);
-      border-left: 3px solid var(--accent);
-      padding: 0.6rem 1rem;
-      margin: 1rem 0;
-      font-size: 0.9rem;
-    }
-    .banner-error {
-      background: #fef2f2;
-      border-left-color: #c33;
-    }
-    .tag {
-      display: inline-block;
-      background: var(--bg-alt);
-      padding: 0.15rem 0.5rem;
-      border-radius: 3px;
-      font-size: 0.8rem;
-      color: var(--text-muted);
-    }
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      color: var(--text-muted);
-      font-style: italic;
-    }
-    code {
-      font-family: ui-monospace, monospace;
-      font-size: 0.85em;
-      background: var(--bg-alt);
-      padding: 0.1rem 0.3rem;
-      border-radius: 2px;
-    }
-    {% block extra_css %}{% endblock %}
-  </style>
+  <script src="/static/engram.js"></script>
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <header>
-    <a href="/memory" class="logo">Engram</a>
-    <nav>
-      <a href="/chat" {% if active_page == 'chat' %}class="active"{% endif %}>Chat</a>
-      <a href="/api/admin" {% if active_page == 'documents' %}class="active"{% endif %}>Documents</a>
-      <a href="/memory" {% if active_page == 'memory' %}class="active"{% endif %}>Memory</a>
-      <a href="/settings" {% if active_page == 'settings' %}class="active"{% endif %}>Settings</a>
-    </nav>
-  </header>
-  <main>
+{% if bare %}
+  {% block bare %}{% endblock %}
+{% else %}
+<div class="app">
+  <nav class="side" aria-label="Main">
+    <a href="/memory" class="brand"><span class="brand-mark">e</span><span class="brand-name">Engram</span></a>
+    <form action="/search" method="get" role="search">
+      <label class="search" style="min-height:44px">{{ icon("search") }}
+        <span class="sr">Search everything</span>
+        <input id="global-search" name="q" placeholder="Search everything" value="{{ q_global or '' }}">
+        <span class="mono tiny" style="padding:2px 6px;border:1px solid var(--line);border-radius:5px">⌘K</span>
+      </label>
+    </form>
+    {% set n = nav or {} %}
+    <div class="nav-group">
+      <div class="nav-label">Library</div>
+      <a class="nav-link {{ 'active' if active == 'overview' }}" href="/memory">{{ icon("home") }}Overview</a>
+      <a class="nav-link {{ 'active' if active == 'documents' }}" href="/admin">{{ icon("doc") }}Documents<span class="count">{{ n.documents|num }}</span></a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Memory</div>
+      <a class="nav-link {{ 'active' if active == 'topics' }}" href="/topics">{{ icon("topics") }}Topics<span class="count">{{ n.topics|num }}</span></a>
+      <a class="nav-link {{ 'active' if active == 'events' }}" href="/events">{{ icon("events") }}Events<span class="count">{{ n.events|num }}</span></a>
+      <a class="nav-link {{ 'active' if active == 'facts' }}" href="/facts">{{ icon("facts") }}Facts<span class="count">{{ n.facts|num }}</span></a>
+      <a class="nav-link {{ 'active' if active == 'lessons' }}" href="/lessons">{{ icon("lessons") }}Lessons<span class="count">{{ n.lessons|num }}</span></a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Tools</div>
+      <a class="nav-link {{ 'active' if active == 'recall' }}" href="/recall">{{ icon("recall") }}Recall inspector</a>
+      <a class="nav-link {{ 'active' if active == 'cleanup' }}" href="/cleanup">{{ icon("cleanup") }}Cleanup{% if n.cleanup %}<span class="badge">{{ n.cleanup }}</span>{% endif %}</a>
+      <a class="nav-link {{ 'active' if active == 'queue' }}" href="/queue">{{ icon("queue") }}Queue</a>
+      <a class="nav-link {{ 'active' if active == 'chat' }}" href="/chat">{{ icon("chat") }}Ask Engram</a>
+    </div>
+    <div style="flex:1"></div>
+    <div class="side-status">
+      <div class="inline" style="gap:8px">
+        {% if remote %}<span class="dot warn"></span>Remote · signed in{% else %}<span class="dot ok"></span>Local session · no token{% endif %}
+      </div>
+      <div class="muted">Backed up {{ backup|ago if backup else "never" }}</div>
+    </div>
+    <a class="nav-link {{ 'active' if active == 'settings' }}" href="/settings">{{ icon("settings") }}Settings</a>
+  </nav>
+  <main class="content" id="main">
     {% block body %}{% endblock %}
   </main>
-  {% block extra_js %}{% endblock %}
+</div>
+{% endif %}
+<div id="toasts" aria-live="polite"></div>
+{% block scripts %}{% endblock %}
 </body>
 </html>

@@ -89,23 +89,14 @@ async def prepare_chat(
         if chat_session is None:
             raise ValueError(f"session not found: {session_id}")
 
-    # Resolve provider
-    p_name = provider_name or chat_session.provider or "ollama"
-    p_model = model_name or chat_session.model
-
-    ps = (await db_session.execute(
-        select(ProviderSetting).where(ProviderSetting.provider == p_name)
-    )).scalar_one_or_none()
-
-    if ps and not p_model:
-        p_model = ps.model
-
-    provider = get_provider(
-        p_name,
-        api_key=ps.api_key if ps else None,
-        model=p_model,
-        base_url=ps.base_url if ps else None,
-    )
+    # Resolve provider: this conversation's choice, else the Settings page's chat default.
+    from src.memory import llm
+    default = llm.steps("chat")
+    p_name = provider_name or chat_session.provider or (default[0][0] if default else "ollama")
+    p_model = model_name or (chat_session.model if not provider_name else None) \
+        or (default[0][1] if default and default[0][0] == p_name else None)
+    provider = llm.make(p_name, p_model)
+    p_model = getattr(provider, "model", p_model)
 
     chat_session.provider = p_name
     chat_session.model = p_model or (provider.model if hasattr(provider, 'model') else None)

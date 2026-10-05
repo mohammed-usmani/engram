@@ -10,6 +10,15 @@ from src.memory.models import Entity
 from src.services.ollama_client import embed
 
 _SIM_THRESHOLD = 0.9
+CANON_KINDS = ("company", "person", "project", "topic", "place", "tool", "org")
+
+
+def canon_kind(kind: str | None) -> str:
+    """Apply the Cleanup page's kind map; anything still unknown becomes a plain topic."""
+    from src import settings_store  # late: settings_store pulls in the LLM layer
+    kind = (kind or "topic").strip().lower()
+    kind = (settings_store.get("kind_map") or {}).get(kind, kind)
+    return kind if kind in CANON_KINDS else "topic"
 
 
 def slugify(kind: str, name: str) -> str:
@@ -31,7 +40,7 @@ async def resolve(session: AsyncSession, items: list[dict]) -> dict[str, str]:
         name = (item.get("name") or "").strip()
         if not name or name in out:
             continue
-        kind = (item.get("kind") or "topic").strip().lower()
+        kind = canon_kind(item.get("kind"))
         slug = slugify(kind, name)
         hit = by_slug.get(slug) or next((e for e in known if name.lower() in _names(e)), None)
         vec = None

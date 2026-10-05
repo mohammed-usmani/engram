@@ -7,7 +7,6 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
@@ -38,7 +37,6 @@ async def _refresh_derived(doc: ContextDocument) -> None:
         doc.embedding = await embed(f"{doc.title}\n{doc.content}\n{doc.attachments_text or ''}"[:6000])
     except Exception as e:  # Ollama down: keep the edit, re-embed later via /api/admin/embed
         log.warning("re-embed failed for %s: %s", doc.slug, e)
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _check_token(request: Request) -> None:
@@ -145,40 +143,107 @@ async def import_files(
     return RedirectResponse(f"/api/admin?import={summary}", status_code=303)
 
 
+TEMPLATES = {
+    "passport": {"title": "Passport", "type": "travel", "privacy": "local-only",
+                 "content": "Number: \nIssued: \nExpires: \nPlace of issue: \n\nNotes:\nRenew about 6 months before it expires.\n"},
+    "insurance": {"title": "Insurance policy", "type": "finance", "privacy": "private",
+                  "content": "Insurer: \nPolicy number: \nCovers: \nRenews: \nPremium: \n\nNotes:\n"},
+    "person": {"title": "", "type": "person", "privacy": "normal",
+               "content": "Relation: \nBirthday: \nPhone: \n\nNotes:\nThings they like, plans, what to remember.\n"},
+    "health": {"title": "Health report", "type": "health", "privacy": "private",
+               "content": "Lab: \nDate: \nNext check: \n\nResults:\nAttach the PDF below once saved.\n"},
+}
+EVERYDAY = ["note", "person", "health", "finance", "home", "travel", "learning", "reference"]
+
+
 @router.get("", response_class=HTMLResponse)
 async def admin_index(
     request: Request,
     type: str | None = None,
     q: str | None = None,
+    privacy: str | None = None,
+    has: str | None = None,
+    sort: str = "updated",
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
+    from src import dates
+    from src.doc_types import list_types
+    from src.models import DocumentAttachment
+    from src.ui.templating import render
     stmt = select(ContextDocument).where(readable(ContextDocument.privacy))
     if type:
         stmt = stmt.where(ContextDocument.type == type)
+    if privacy in PRIVACY_LEVELS:
+        stmt = stmt.where(ContextDocument.privacy == privacy)
+    if has == "attachments":
+        stmt = stmt.where(ContextDocument.id.in_(select(DocumentAttachment.document_id)))
     if q:
         tsq = func.plainto_tsquery("english", q)
         stmt = stmt.where(ContextDocument.search_vector.op("@@")(tsq))
         stmt = stmt.order_by(func.ts_rank(ContextDocument.search_vector, tsq).desc())
     else:
-        stmt = stmt.order_by(ContextDocument.type, ContextDocument.title)
+        stmt = stmt.order_by(*{"title": [func.lower(ContextDocument.title)],
+                               "type": [ContextDocument.type, func.lower(ContextDocument.title)]}.get(
+            sort, [ContextDocument.updated_at.desc()]))
     docs = (await session.execute(stmt.limit(500))).scalars().all()
-    return templates.TemplateResponse("list.html", {
-        "request": request, "docs": docs,
-        "types": await type_names(session), "type": type, "q": q,
-        "import_summary": request.query_params.get("import"),
-        "active_page": "documents",
-    })
+    date_keys = {*dates.ONE_OFF, *dates.YEARLY}
+    has_date = lambda d: any(k.strip().lower() in date_keys for k in (d.doc_metadata or {}))  # noqa: E731
+    if has == "dates":
+        docs = [d for d in docs if has_date(d)]
+    all_docs = (await session.execute(select(ContextDocument).where(readable(ContextDocument.privacy)))).scalars().all()
+    att_counts = dict((await session.execute(select(DocumentAttachment.document_id, func.count())
+                                             .group_by(DocumentAttachment.document_id))).all())
+    types = await list_types(session)
+    return await render(
+        request, "list.html", session, "documents", docs=docs, q=q or "", type=type or "", privacy=privacy or "",
+        has=has or "", sort=sort, used_types=[t for t in types if t["count"]],
+        empty_types=[t for t in types if not t["count"] and t["name"] in EVERYDAY],
+        privacy_counts={lvl: sum(d.privacy == lvl for d in all_docs) for lvl in PRIVACY_LEVELS},
+        n_attached=len(att_counts), n_dated=sum(has_date(d) for d in all_docs), total=len(all_docs),
+        att_counts=att_counts, templates_=TEMPLATES, import_summary=request.query_params.get("import"),
+    )
+
+
+async def _editor(request: Request, session: AsyncSession, doc: ContextDocument | None, *, error: str | None = None,
+                  prefill: dict | None = None, status_code: int = 200):
+    """Editor page context: the text plus everything Engram derives from it."""
+    from src import dates
+    from src.memory.entities import match_text
+    from src.ui.templating import render
+    ctx = {"is_new": doc is None, "doc": doc, "privacy_levels": PRIVACY_LEVELS, "types": await type_names(session),
+           "error": error, "prefill": prefill or {}}
+    if doc is not None:
+        items, unreadable = await dates.upcoming(session, 366)
+        ctx.update(
+            tracked=[i for i in items if i["slug"] == doc.slug],
+            unreadable=[u for u in unreadable if u["slug"] == doc.slug],
+            body_dates=dates.body_dates(doc.content, doc.doc_metadata),
+            attachments=await attachments.for_doc(session, doc),
+            topics=(await match_text(session, f"{doc.title}\n{doc.content}"))[:12],
+            privacy_hint=_privacy_hint(doc) if doc.privacy == "normal" else None,
+        )
+    return await render(request, "edit.html", session, "documents", status_code=status_code, **ctx)
+
+
+_SENSITIVE = [
+    (re.compile(r"\b(lpa|ctc|salary|₹|rs\.?\s?\d|bank|account number|ifsc|upi)\b", re.I), "salary or bank details"),
+    (re.compile(r"\b(passport|aadhaar|pan card|licen[cs]e number|ssn)\b", re.I), "ID numbers"),
+    (re.compile(r"\b(diagnos|prescription|blood|medical|therapy|symptom)", re.I), "health details"),
+    (re.compile(r"\b(password|pin|otp)\b", re.I), "credentials"),
+]
+
+
+def _privacy_hint(doc: ContextDocument) -> str | None:
+    found = [label for rx, label in _SENSITIVE if rx.search(doc.content or "")]
+    return (f"This mentions {', '.join(found)}. Private keeps it out of automatic briefs and search."
+            if found else None)
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def new_form(request: Request, session: AsyncSession = Depends(get_session),
+async def new_form(request: Request, template: str | None = None, session: AsyncSession = Depends(get_session),
                    _: None = Depends(_check_token)):
-    return templates.TemplateResponse("edit.html", {
-        "request": request, "is_new": True, "doc": None, "privacy_levels": PRIVACY_LEVELS,
-        "types": await type_names(session), "error": None,
-        "active_page": "documents",
-    })
+    return await _editor(request, session, None, prefill=TEMPLATES.get(template or "", {}))
 
 
 @router.post("/new", response_class=HTMLResponse)
@@ -199,11 +264,8 @@ async def new_submit(
         if privacy not in PRIVACY_LEVELS:
             raise ToolInputError(f"privacy must be one of {', '.join(PRIVACY_LEVELS)}", "")
     except ToolInputError as e:
-        return templates.TemplateResponse("edit.html", {
-            "request": request, "is_new": True, "doc": None, "privacy_levels": PRIVACY_LEVELS,
-            "types": await type_names(session), "error": f"{e.payload['error']} {e.payload['fix']}",
-            "active_page": "documents",
-        }, status_code=400)
+        return await _editor(request, session, None, error=f"{e.payload['error']} {e.payload['fix']}", status_code=400,
+                             prefill={"title": title, "type": type, "content": content, "privacy": privacy})
 
     chosen_slug = slug.strip() or f"{doc_type}/{_slugify(title)}"
     existing = (await session.execute(select(ContextDocument).where(ContextDocument.slug == chosen_slug))).scalar_one_or_none()
@@ -292,16 +354,7 @@ async def edit_form(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(_check_token),
 ):
-    doc = (await session.execute(select(ContextDocument).where(
-        ContextDocument.slug == slug, readable(ContextDocument.privacy)))).scalar_one_or_none()
-    if doc is None:
-        raise HTTPException(404, "not found")
-    return templates.TemplateResponse("edit.html", {
-        "request": request, "is_new": False, "doc": doc, "privacy_levels": PRIVACY_LEVELS,
-        "attachments": await attachments.for_doc(session, doc),
-        "types": await type_names(session), "error": None,
-        "active_page": "documents",
-    })
+    return await _editor(request, session, await _readable_doc(session, slug))
 
 
 @router.post("/{slug:path}", response_class=HTMLResponse)
@@ -333,10 +386,10 @@ async def edit_submit(
         doc.updated_by = "admin"
         await _refresh_derived(doc)
     except ToolInputError as e:
-        return templates.TemplateResponse("edit.html", {
-            "request": request, "is_new": False, "doc": doc, "privacy_levels": PRIVACY_LEVELS,
-            "types": await type_names(session), "error": f"{e.payload['error']} {e.payload['fix']}",
-            "active_page": "documents",
-        }, status_code=400)
+        await session.rollback()
+        return await _editor(request, session, await _readable_doc(session, slug),
+                             error=f"{e.payload['error']} {e.payload['fix']}", status_code=400,
+                             prefill={"title": title, "type": type, "content": content, "privacy": privacy,
+                                      "tags": tags, "type_description": type_description})
     await session.commit()
     return RedirectResponse(f"/api/admin/{slug}", status_code=303)

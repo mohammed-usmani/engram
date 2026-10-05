@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}{{ conversation.title ~ " · " if conversation else "" }}Ask Engram{% endblock %}
+{% macro used_list(items, key) -%}
+<div class="used stack" style="gap:0">
+  <div class="label">Memories used</div>
+  {% for u in items %}
+  <div class="list-row" id="used-{{ key }}-{{ loop.index }}" data-id="{{ u.id }}" data-href="{{ u.href }}">
+    <span class="chip mono">{{ u.id if u.id|length < 14 else u.id[:12] ~ "…" }}</span>
+    <span class="chip">{{ u.kind|kindlabel }}</span>
+    <span class="small" style="flex:1;min-width:0">{{ u.text }}</span>
+    <span class="inline" style="gap:6px;flex:none">
+      {% if u.href %}<a class="btn sm ghost" href="{{ u.href }}">Open</a>{% endif %}
+      {% if u.id[:2] in ("e:", "r:", "f:") and u.kind != "gone" %}
+      <button class="btn sm ghost danger" data-api="DELETE /api/memory/item/{{ u.id }}"
+              data-confirm="Forget this {{ u.kind|kindlabel }} for good? It disappears from every assistant's memory."
+              data-then="remove:#used-{{ key }}-{{ loop.index }}|toast:Forgotten">Forget</button>
+      {% endif %}
+    </span>
+  </div>
+  {% else %}
+  <div class="small muted">None. This answer didn't cite anything from memory.</div>
+  {% endfor %}
+</div>
+{%- endmacro %}
+{% block head %}<style>
+  .thread { display: flex; flex-direction: column; gap: 16px; flex: 1; }
+  .msg-user { align-self: flex-end; max-width: 80%; background: var(--ink); color: var(--paper); padding: 10px 14px;
+              border-radius: 14px 14px 4px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg-bot { display: flex; flex-direction: column; gap: 12px; }
+  .answer { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+  .answer a.cite { font-family: var(--mono); font-size: .85em; text-decoration: none; background: var(--blue-soft);
+                   color: var(--blue-ink); padding: 0 5px; border-radius: 4px; }
+  .used .list-row { align-items: center; flex-wrap: wrap; }
+  .pending { color: var(--muted); font-style: italic; }
+  .composer { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line-strong);
+              border-radius: 14px; background: var(--panel); position: sticky; bottom: 12px; }
+  .composer textarea { border: 0; outline: none; resize: vertical; font: inherit; font-size: 15px; background: transparent; color: var(--ink); }
+  .suggest { min-height: 48px; padding: 8px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+             font: inherit; font-size: 15px; color: var(--ink); cursor: pointer; text-align: left; }
+  .suggest:hover { border-color: var(--line-strong); }
+  .conv { display: flex; align-items: center; gap: 6px; }
+  .conv a { flex: 1; min-width: 0; text-decoration: none; color: var(--ink-2); font-size: 14px; padding: 6px 8px; border-radius: 6px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv a:hover, .conv a.on { background: var(--sunk); color: var(--ink); }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <div class="row-wrap" style="align-items:stretch">
+    <section class="grow-3 stack" style="gap:20px">
+      <header class="page-head">
+        <div>
+          <h1>{{ conversation.title if conversation else "Ask Engram" }}</h1>
+          <div class="sub">{% if conversation %}Started {{ conversation.created_at|ago }} · {{ conversation.provider }}{{ " · " ~ conversation.model if conversation.model }}
+            {% else %}Ask about your own life and work. Answers come from the same recall brief your assistants get, with sources you can open.{% endif %}</div>
+        </div>
+        {% if conversation %}
+        <div class="inline">
+          <a class="btn" href="/chat">New question</a>
+          <button class="btn danger" data-api="DELETE /api/ask/conversations/{{ conversation.id }}"
+                  data-confirm="Delete this conversation? Memories it queued stay." data-then="redirect:/chat">Delete</button>
+        </div>
+        {% endif %}
+      </header>
+
+      <div class="thread" id="thread">
+        {% for m in messages %}
+          {% if m.role == "user" %}
+          <div class="msg-user">{{ m.content }}</div>
+          {% else %}
+          <div class="msg-bot card">
+            <div class="answer" data-linkify>{{ m.content }}</div>
+            {{ used_list(m.used, loop.index) }}
+          </div>
+          {% endif %}
+        {% else %}
+        <div class="empty stack" id="empty" style="align-items:center;gap:18px;padding:40px 20px">
+          <span style="font-family:var(--serif);font-size:26px;font-weight:600;color:var(--ink)">{{ "No conversations yet" if not conversations else "Ask something new" }}</span>
+          <span style="max-width:480px">This reads all of memory: events, facts, lessons, documents and dates.{% if suggestions %} Try one of these:{% endif %}</span>
+          {% if suggestions %}
+          <div class="stack" style="gap:8px;width:100%;max-width:520px">
+            {% for s in suggestions %}<button type="button" class="suggest" data-suggest>{{ s }}</button>{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      <form class="composer" id="composer" data-conversation="{{ conversation.id if conversation else '' }}">
+        <label class="sr" for="ask">Message</label>
+        <textarea id="ask" rows="3" placeholder="Ask anything about yourself… (Enter to send, Shift+Enter for a new line)" required></textarea>
+        <div class="between" style="flex-wrap:wrap;gap:10px">
+          <span class="inline small muted" style="flex-wrap:wrap;gap:8px">
+            <label class="inline" style="gap:8px" for="answer-with">Answer with</label>
+            <select class="select" id="answer-with" style="max-width:280px">
+              {% for p in composer.usable %}
+              <optgroup label="{{ p.label }}{{ ' · local' if p.provider == 'ollama' }}">
+                {% for m in p.models %}
+                {% set v = p.provider ~ '|' ~ m %}
+                <option value="{{ v }}" {{ 'selected' if v == composer.selected }}>{{ m or 'default model' }}{{ ' (default)' if m == p.default }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endfor %}
+              {% if composer.missing %}
+              <optgroup label="Add a key in Settings to use">
+                <option disabled>{{ composer.missing|join(", ") }}</option>
+              </optgroup>
+              {% endif %}
+            </select>
+            <a href="/settings">Change default</a>
+          </span>
+          <button type="submit" class="btn primary" id="send">Ask</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="grow-1 stack" style="gap:16px">
+      <section class="card stack" style="gap:10px">
+        <h2>What it can see</h2>
+        <ul class="small" style="margin:0;padding-left:18px;color:var(--ink-2)">
+          <li>Normal documents, events, facts and lessons</li>
+          <li>Dates coming up</li>
+          <li>Private documents only when you name them</li>
+        </ul>
+      </section>
+      <section class="card stack" style="gap:10px">
+        <h2>After each answer</h2>
+        <p class="small" style="margin:0;color:var(--ink-2)">Every memory it used is listed with its id. Open one to check it, or forget it if it's wrong.</p>
+        <p class="small" style="margin:0;color:var(--ink-2)">Anything new you tell it is queued as memory, like any other assistant.</p>
+      </section>
+      <section class="card stack" style="gap:8px">
+        <h2>Past conversations</h2>
+        <div id="convs" class="stack" style="gap:2px">
+          {% for c in conversations %}
+          <div class="conv" id="conv-{{ c.id }}">
+            <a href="/chat/{{ c.id }}" class="{{ 'on' if conversation and c.id == conversation.id }}" title="{{ c.title }}">{{ c.title or "Untitled" }}<br><span class="tiny muted">{{ c.updated_at|ago }} · {{ c.message_count }} messages</span></a>
+            <button class="btn sm ghost" aria-label="Delete conversation {{ c.title }}" data-api="DELETE /api/ask/conversations/{{ c.id }}"
+                    data-confirm="Delete this conversation? Memories it queued stay."
+                    data-then="{{ 'redirect:/chat' if conversation and c.id == conversation.id else 'remove:#conv-' ~ c.id }}">✕</button>
+          </div>
+          {% else %}
+          <div class="small muted" id="no-convs">None yet.</div>
+          {% endfor %}
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+(function () {
+  const ID = /\[((?:e|r):\d+|f:[0-9a-fA-F-]{8,}|d:[^\]\s]+)\]/g;
+  const form = document.getElementById('composer'), box = document.getElementById('ask');
+  const thread = document.getElementById('thread'), select = document.getElementById('answer-with');
+  let conversation = form.dataset.conversation ? parseInt(form.dataset.conversation, 10) : null;
+  let seq = 0;
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function fallbackHref(id) {
+    const [p, ...rest] = id.split(':'), key = rest.join(':');
+    return { e: '/events?focus=' + key, r: '/lessons', d: '/api/admin/' + key, f: '/facts' }[p] || '';
+  }
+
+  // Model output is only ever set as text; [e:12]-style ids become links built as DOM nodes.
+  function linkify(node) {
+    const text = node.textContent, hrefs = {};
+    const card = node.closest('.msg-bot');
+    if (card) card.querySelectorAll('[data-id]').forEach((r) => { if (r.dataset.href) hrefs[r.dataset.id] = r.dataset.href; });
+    node.textContent = '';
+    let last = 0;
+    for (const m of text.matchAll(ID)) {
+      node.append(text.slice(last, m.index));
+      const a = el('a', 'cite', m[1]);
+      a.href = hrefs[m[1]] || fallbackHref(m[1]);
+      node.append(a);
+      last = m.index + m[0].length;
+    }
+    node.append(text.slice(last));
+  }
+  document.querySelectorAll('[data-linkify]').forEach(linkify);
+
+  function usedList(items) {
+    const wrap = el('div', 'used stack');
+    wrap.style.gap = '0';
+    wrap.append(el('div', 'label', 'Memories used'));
+    if (!items.length) wrap.append(el('div', 'small muted', "None. Memory had nothing relevant to this question."));
+    for (const u of items) {
+      const row = el('div', 'list-row');
+      row.id = 'used-live-' + (++seq);
+      row.dataset.id = u.id; row.dataset.href = u.href || '';
+      row.append(el('span', 'chip mono', u.id.length < 14 ? u.id : u.id.slice(0, 12) + '…'),
+                 el('span', 'chip', (u.kind || '').replace(/_/g, ' ')));
+      const t = el('span', 'small', u.text); t.style.flex = '1'; t.style.minWidth = '0';
+      const act = el('span', 'inline'); act.style.gap = '6px'; act.style.flex = 'none';
+      if (u.href) { const a = el('a', 'btn sm ghost', 'Open'); a.href = u.href; act.append(a); }
+      if (/^[erf]:/.test(u.id)) {
+        const b = el('button', 'btn sm ghost danger', 'Forget');
+        b.dataset.api = 'DELETE /api/memory/item/' + u.id;
+        b.dataset.confirm = "Forget this " + u.kind + " for good? It disappears from every assistant's memory.";
+        b.dataset.then = 'remove:#' + row.id + '|toast:Forgotten';
+        act.append(b);
+      }
+      row.append(t, act);
+      wrap.append(row);
+    }
+    return wrap;
+  }
+
+  async function send(message) {
+    const empty = document.getElementById('empty');
+    if (empty) empty.remove();
+    const [provider, ...m] = (select.value || '').split('|');
+    thread.append(el('div', 'msg-user', message));
+    const bot = el('div', 'msg-bot card');
+    const pending = el('div', 'answer pending', 'Reading memory and thinking…');
+    bot.append(pending);
+    thread.append(bot);
+    bot.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    const btn = document.getElementById('send');
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    try {
+      const r = await Engram.api('POST', '/api/ask', {
+        message, conversation_id: conversation, provider: provider || null, model: m.join('|') || null });
+      const isNew = conversation === null;
+      conversation = r.conversation_id;
+      bot.innerHTML = '';
+      const ans = el('div', 'answer', r.answer);
+      bot.append(ans, usedList(r.used));
+      linkify(ans);
+      bot.append(el('div', 'tiny muted', r.provider + (r.model ? ' · ' + r.model : '')));
+      if (isNew) {
+        history.replaceState(null, '', '/chat/' + conversation);
+        const none = document.getElementById('no-convs');
+        if (none) none.remove();
+        const row = el('div', 'conv'); row.id = 'conv-' + conversation;
+        const a = el('a', 'on', r.title); a.href = '/chat/' + conversation;
+        row.append(a);
+        document.getElementById('convs').prepend(row);
+      }
+    } catch (err) {
+      bot.remove();
+      thread.lastElementChild.remove();  // the user bubble; the text goes back in the box
+      box.value = message;
+      Engram.toast(err.message, 'error');
+    } finally {
+      btn.disabled = false; btn.removeAttribute('aria-busy');
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const message = box.value.trim();
+    if (!message || document.getElementById('send').disabled) return;
+    box.value = '';
+    send(message);
+  });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+  });
+  document.addEventListener('click', (e) => {
+    const s = e.target.closest('[data-suggest]');
+    if (s) { box.value = s.textContent.trim(); form.requestSubmit(); }
+  });
+})();
+</script>{% endblock %}

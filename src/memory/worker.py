@@ -30,9 +30,9 @@ async def _slot(stop: asyncio.Event, idle_sleep: float, consolidates: bool) -> N
     """One worker slot: claims the next due job as soon as it's free, so a stuck LLM call only
     holds its own slot (a fixed batch waited for its slowest job, one hang blocked four)."""
     global _soon
-    every = float(os.environ.get("CONSOLIDATE_EVERY_H", "6")) * 3600
     last = time.monotonic()
     while not stop.is_set():
+        every = float(os.environ.get("CONSOLIDATE_EVERY_H", "6")) * 3600  # changeable from Settings
         try:
             async with AsyncSessionLocal() as session:
                 n = await process_pending(session)

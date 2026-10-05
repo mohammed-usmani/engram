@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ q ~ " · " if q }}Search · Engram{% endblock %}
+{% block body %}
+<div class="wrap narrow">
+  <header class="page-head">
+    <div>
+      <h1>Search</h1>
+      <div class="sub">{% if q %}{{ total }} result{{ "" if total == 1 else "s" }} for “{{ q }}” across documents, topics, events, facts and lessons.{% else %}Search documents, topics, events, facts and lessons at once.{% endif %}</div>
+    </div>
+  </header>
+
+  <form action="/search" method="get" role="search" class="inline">
+    <label class="search grow-2" style="min-height:44px;flex:1"><span class="sr">Search everything</span>
+      <input name="q" value="{{ q }}" placeholder="Search everything" autofocus></label>
+    <button class="btn primary" type="submit">Search</button>
+  </form>
+
+  {% if q and not total %}
+  <div class="empty">Nothing matches “{{ q }}”. Try fewer or different words, or <a href="/chat">ask Engram</a> instead.</div>
+  {% endif %}
+
+  {% if res.documents %}
+  <section class="card stack" style="gap:0" aria-labelledby="h-docs">
+    <div class="between"><h2 id="h-docs">Documents</h2><span class="small muted">{{ res.documents|length }}</span></div>
+    {% for d in res.documents %}
+    <div class="list-row">
+      <div class="stack" style="gap:2px;flex:1;min-width:0">
+        <a href="/api/admin/{{ d.slug }}" style="font-weight:600">{{ d.title }}</a>
+        <span class="small muted">{{ d.snippet }}</span>
+      </div>
+      <span class="inline" style="gap:6px;flex:none">
+        {% if d.privacy and d.privacy != "normal" %}<span class="chip amber">{{ d.privacy }}</span>{% endif %}
+        <span class="chip">{{ d.type }}</span>
+      </span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if res.topics %}
+  <section class="card stack" style="gap:0" aria-labelledby="h-topics">
+    <div class="between"><h2 id="h-topics">Topics</h2><span class="small muted">{{ res.topics|length }}</span></div>
+    {% for t in res.topics %}
+    <div class="list-row">
+      <a href="/topics/{{ t.slug }}" style="flex:1;font-weight:600">{{ t.name }}</a>
+      <span class="chip">{{ t.kind }}</span>
+      <span class="small muted" style="min-width:80px;text-align:right">{{ t.n|num }} event{{ "" if t.n == 1 else "s" }}</span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if res.events %}
+  <section class="card stack" style="gap:0" aria-labelledby="h-events">
+    <div class="between"><h2 id="h-events">Events</h2><span class="small muted">{{ res.events|length }}{{ " (top 20)" if res.events|length == 20 }}</span></div>
+    {% for e in res.events %}
+    <div class="list-row">
+      <span class="kind k-{{ e.kind }}">{{ e.kind|kindlabel }}</span>
+      <a href="/events?focus={{ e.id }}" style="flex:1;min-width:0;color:var(--ink)">{{ e.summary }}</a>
+      <span class="small muted mono" style="flex:none">{{ e.occurred_at|day }}</span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if res.facts %}
+  <section class="card stack" style="gap:0" aria-labelledby="h-facts">
+    <div class="between"><h2 id="h-facts">Facts</h2><span class="small muted">{{ res.facts|length }}</span></div>
+    {% for f in res.facts %}
+    <div class="list-row">
+      <span class="chip">{{ f.kind }}</span>
+      <a href="{{ f.href }}" style="flex:1;min-width:0;color:var(--ink)">{{ f.text }}</a>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if res.lessons %}
+  <section class="card stack" style="gap:0" aria-labelledby="h-lessons">
+    <div class="between"><h2 id="h-lessons">Lessons</h2><span class="small muted">{{ res.lessons|length }}</span></div>
+    {% for r in res.lessons %}
+    <div class="list-row">
+      <a href="/lessons" style="flex:1;min-width:0;color:var(--ink)">{{ r.lesson }}</a>
+      <span class="small muted mono" style="flex:none">r:{{ r.id }} · {{ (r.confidence * 100)|round|int }}%</span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

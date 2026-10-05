@@ -39,6 +39,23 @@ Re-state existing lessons if still true. Use [] when there is no real pattern.""
 _TEMPLATE_ECHO = ("specific pattern", "pattern or conclusion", "2-3 sentences", "where things stand")
 
 
+_rejected_vecs: dict[str, list[float]] = {}
+
+
+async def _rejected(vec: list[float]) -> bool:
+    """Lessons the user marked wrong on /lessons never come back, in any wording close to the original."""
+    from src import settings_store as store
+    for text in store.get("rejected_lessons") or []:
+        if text not in _rejected_vecs:
+            _rejected_vecs[text] = await embed(text)
+        r = _rejected_vecs[text]
+        dot = sum(a * b for a, b in zip(vec, r))
+        norm = (sum(a * a for a in vec) * sum(b * b for b in r)) ** 0.5
+        if norm and dot / norm >= REFLECTION_MERGE_SIM:
+            return True
+    return False
+
+
 def _echo(text: str) -> bool:
     low = text.lower()
     return len(low) < 15 or any(t in low for t in _TEMPLATE_ECHO)
@@ -77,6 +94,8 @@ async def _entity(session: AsyncSession, e: Entity) -> int:
         conf = r.get("confidence")
         conf = float(conf) if isinstance(conf, (int, float)) and 0 <= conf <= 1 else 0.5
         vec = await embed(r["lesson"])
+        if await _rejected(vec):
+            continue
         same = (await session.execute(
             select(Reflection, 1 - Reflection.embedding.cosine_distance(vec))
             .where(Reflection.embedding.isnot(None)).order_by(Reflection.embedding.cosine_distance(vec)).limit(1)

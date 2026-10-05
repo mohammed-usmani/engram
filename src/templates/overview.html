@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Overview · Engram{% endblock %}
+{% block head %}<style>
+.weeks { display:flex; align-items:flex-end; gap:8px; height:190px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+.weeks .col { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; height:100%; }
+.weeks .b { width:100%; max-width:44px; border-radius:5px 5px 0 0; background:var(--accent); min-height:2px; }
+.weeks .col:last-child .b { background:#D9B98C; }
+.cal { flex:none; width:56px; text-align:center; display:flex; flex-direction:column; border-radius:8px; background:var(--panel); padding:6px 0; }
+.cal .m { font-size:11px; font-weight:600; color:var(--red); letter-spacing:.06em; }
+.cal .d { font-family:var(--serif); font-size:26px; font-weight:600; line-height:1; }
+.att { display:flex; gap:12px; align-items:flex-start; padding:12px; border-radius:10px; background:var(--paper); text-decoration:none; color:var(--ink); }
+.att .n { flex:none; min-width:34px; height:26px; padding:0 6px; border-radius:6px; background:var(--ink); color:#fff; font-size:12px; font-weight:600; display:flex; align-items:center; justify-content:center; }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><div class="label">{{ now|longdate }}</div><h1 style="margin-top:6px">Overview</h1></div>
+    <div class="inline">
+      <a class="btn" href="/recall">Test a recall</a>
+      <button class="btn primary" data-open="#remember">Remember something</button>
+    </div>
+  </header>
+
+  <section aria-label="Memory at a glance" class="grid-auto">
+    <a class="stat" href="/events"><span class="label">Events</span><span class="value">{{ stats.events|num }}</span><span class="small muted">+{{ stats.events_week|num }} in the last 7 days</span></a>
+    <a class="stat" href="/facts"><span class="label">Facts</span><span class="value">{{ stats.facts|num }}</span><span class="small muted">{{ stats.prefs|num }} preferences · {{ stats.procs|num }} procedures</span></a>
+    <a class="stat" href="/lessons"><span class="label">Lessons</span><span class="value">{{ stats.lessons|num }}</span><span class="small muted">from the sleep pass</span></a>
+    <a class="stat" href="/topics"><span class="label">Topics</span><span class="value">{{ stats.topics|num }}</span><span class="small muted">{{ stats.topics_once|num }} mentioned once</span></a>
+    <a class="stat" href="/admin"><span class="label">Documents</span><span class="value">{{ docs|num }}</span><span class="small muted">{{ types_used }} types in use</span></a>
+  </section>
+
+  <div class="row-wrap">
+    <section class="card stack grow-2" aria-labelledby="h-soon">
+      <div class="between"><h2 id="h-soon">Coming up</h2><span class="small muted">Next 60 days</span></div>
+      {% for i in soon %}
+      <a href="/api/admin/{{ i.slug }}" class="inline" style="gap:16px;padding:12px 14px;border-radius:10px;background:{{ 'var(--red-soft)' if i.days_left < 0 else 'var(--accent-soft)' }};text-decoration:none;color:var(--ink);flex-wrap:nowrap">
+        {% set d = i.date.split('-') %}
+        <span class="cal"><span class="m">{{ ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d[1]|int - 1] }}</span><span class="d">{{ d[2]|int }}</span></span>
+        <span style="flex:1;gap:2px" class="stack"><span style="font-weight:600">{{ i.title }}</span>
+          <span class="small" style="color:var(--accent-ink)">{{ i.label }}{% if i.turns %} · turns {{ i.turns }}{% endif %}{% if i.privacy != 'normal' %} · {{ i.privacy }}{% endif %}</span></span>
+        <span class="chip dark">{% if i.days_left == 0 %}today{% elif i.days_left == 1 %}tomorrow{% elif i.days_left > 0 %}in {{ i.days_left }} days{% else %}overdue {{ -i.days_left }} days{% endif %}</span>
+      </a>
+      {% endfor %}
+      {% for h in hidden %}
+      <div class="callout">
+        <span>{% from "_icons.html" import icon %}{{ icon("warn") }}</span>
+        <div class="stack" style="gap:8px;flex:1">
+          <span><b>Untracked date in {{ h.title }}</b> (line {{ h.line }}): “{{ h.field }}: {{ h.value }}”{% if h.weekday_conflict %}. That date is a <b>{{ h.weekday_conflict }}</b>{% endif %}.</span>
+          <div class="inline">
+            <button class="btn sm" data-api="POST /api/documents/{{ h.slug }}/track-date" data-body='{"field": "Due", "date": "{{ h.date }}"}'>Track {{ h.date }}</button>
+            <a class="btn sm ghost" href="/api/admin/{{ h.slug }}">Open document</a>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      <p class="small muted">{% if not soon %}Nothing tracked yet. {% endif %}Engram reminds you of any date written at the top of a document. Add one:</p>
+      <div class="grid-auto">
+        {% for t in starters %}
+        <a href="/api/admin/new?template={{ t.template }}" class="soft" style="border:1px dashed var(--line-strong);background:transparent;text-decoration:none;color:var(--ink)">
+          <div style="font-weight:600;font-size:14px">{{ t.title }}</div><div class="mono tiny muted">{{ t.field }}</div></a>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card stack grow-1" aria-labelledby="h-att">
+      <div class="between"><h2 id="h-att">Needs attention</h2><a href="/cleanup" class="small">Open cleanup</a></div>
+      {% for a in attention %}
+      <a class="att" href="{{ a.href }}"><span class="n">{{ a.count|num }}</span>
+        <span class="stack" style="gap:2px"><span style="font-weight:600;font-size:14px">{{ a.title }}</span><span class="small muted">{{ a.detail }}</span></span></a>
+      {% else %}<p class="muted">Nothing needs you right now.</p>{% endfor %}
+    </section>
+  </div>
+
+  <div class="row-wrap">
+    <section class="card stack grow-2" aria-labelledby="h-weeks">
+      <div class="between"><h2 id="h-weeks">Events per week</h2><span class="small muted">Last 12 weeks · this week so far</span></div>
+      <div class="weeks" role="img" aria-label="Events per week: {% for w in weeks %}{{ w.label }} {{ w.n }}{{ ', ' if not loop.last }}{% endfor %}">
+        {% for w in weeks %}<div class="col"><span class="tiny" style="font-weight:500">{{ w.n }}</span><div class="b" style="height:{{ (w.n / max_week * 150)|round|int }}px"></div></div>{% endfor %}
+      </div>
+      <div class="inline" style="gap:8px;flex-wrap:nowrap;margin-top:-6px">{% for w in weeks %}<span class="tiny muted" style="flex:1;text-align:center">{{ w.label }}</span>{% endfor %}</div>
+    </section>
+    <section class="card stack grow-1" aria-labelledby="h-top">
+      <div class="between"><h2 id="h-top">Busiest topics</h2><a href="/topics" class="small">All topics</a></div>
+      {% for t in topics %}
+      <a href="/topics/{{ t.slug }}" class="stack" style="gap:5px;text-decoration:none;color:var(--ink)">
+        <span class="between" style="font-size:14px"><span><b>{{ t.name }}</b> <span class="muted">· {{ t.kind }}</span></span><span>{{ t.n }}</span></span>
+        <span class="bar"><span style="width:{{ (t.n / max_topic * 100)|round|int }}%"></span></span></a>
+      {% else %}<p class="muted">No topics yet.</p>{% endfor %}
+    </section>
+  </div>
+
+  <div class="row-wrap">
+    <section class="card grow-2" aria-labelledby="h-latest">
+      <div class="between" style="margin-bottom:6px"><h2 id="h-latest">Latest events</h2><a href="/events" class="small">All {{ stats.events|num }}</a></div>
+      {% for e in recent %}
+      <a class="list-row" href="/events?focus={{ e.id }}" style="text-decoration:none;color:var(--ink);align-items:baseline">
+        <span class="kind k-{{ e.kind }}">{{ e.kind|kindlabel }}</span>
+        <span style="flex:1;font-size:14px">{{ e.summary }}{% if e.outcome %} <span class="small" style="color:var(--green-ink)">→ {{ e.outcome }}</span>{% endif %}</span>
+        <span class="small muted" style="white-space:nowrap">{{ e.occurred_at|ago }}</span></a>
+      {% else %}<p class="muted">Nothing yet. Close a Claude Code session or call remember.</p>{% endfor %}
+    </section>
+    <section class="card stack grow-1" aria-labelledby="h-sys">
+      <h2 id="h-sys">System</h2>
+      <div class="inline" style="align-items:flex-start;flex-wrap:nowrap"><span class="dot {{ 'bad' if jobs.failed else 'ok' }}" style="margin-top:7px"></span>
+        <span class="stack" style="gap:0"><a href="/queue" style="font-weight:600;color:var(--ink)">Queue</a><span class="small muted">{{ jobs.done or 0 }} done · {{ (jobs.pending or 0) + (jobs.processing or 0) }} waiting · {{ jobs.batched or 0 }} in a batch · {{ jobs.failed or 0 }} failed</span></span></div>
+      <div class="inline" style="align-items:flex-start;flex-wrap:nowrap"><span class="dot {{ 'warn' if batch_on else 'ok' }}" style="margin-top:7px"></span>
+        <span class="stack" style="gap:0"><a href="/settings#h-jobs" style="font-weight:600;color:var(--ink)">Extraction{{ " · batch mode" if batch_on }}</a><span class="small muted">{{ extract|join(" → ") or "no provider configured" }}</span></span></div>
+      <div class="inline" style="align-items:flex-start;flex-wrap:nowrap"><span class="dot {{ 'ok' if backup else 'bad' }}" style="margin-top:7px"></span>
+        <span class="stack" style="gap:0"><a href="/settings#h-backup" style="font-weight:600;color:var(--ink)">Backup</a><span class="small muted">{{ backup|ago if backup else "none found" }} · encrypted, private repo</span></span></div>
+      <div class="inline" style="align-items:flex-start;flex-wrap:nowrap"><span class="dot {{ 'warn' if link.on else 'ok' }}" style="margin-top:7px"></span>
+        <span class="stack" style="gap:0"><a href="/settings#h-access" style="font-weight:600;color:var(--ink)">Public link {{ "on" if link.on else "off" }}</a><span class="small muted">{{ "Web assistants like ChatGPT can reach Engram" if link.on else "Only this computer and your tailnet" }}</span></span></div>
+    </section>
+  </div>
+</div>
+
+<dialog id="remember" aria-labelledby="remember-h">
+  <form class="stack" data-api="POST /api/memory/remember" data-body='{"agent": "admin"}' data-then="toast:Queued. It will appear in a few seconds.|reload">
+    <h3 id="remember-h">Remember something</h3>
+    <p class="small muted">Write it like you'd tell a friend. Engram turns it into events and facts.</p>
+    <label class="field"><span class="label">What happened or what's true</span><textarea class="input" name="text" required></textarea></label>
+    <label class="field"><span class="label">When it happened</span><input class="input" type="datetime-local" name="occurred_at" required id="remember-when"></label>
+    <div class="inline" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Remember</button></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script>
+document.querySelector('[data-open="#remember"]').addEventListener('click', () => {
+  const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  document.getElementById('remember-when').value = d.toISOString().slice(0, 16);
+});
+</script>{% endblock %}

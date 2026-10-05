@@ -1,140 +1,146 @@
 {% extends "base.html" %}
-{% block title %}{{ "New document" if is_new else doc.title }} — Context{% endblock %}
-
-{% block extra_css %}
-  .edit-header {
-    margin-bottom: 1.5rem;
-    padding-bottom: 0.8rem;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-  .edit-header h1 { margin-bottom: 0; }
-  .edit-form {
-    max-width: 780px;
-  }
-  .edit-form label {
-    margin-top: 1.2rem;
-    font-size: 0.82rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    font-weight: 600;
-  }
-  .edit-form input[readonly] {
-    background: var(--bg-alt);
-    color: var(--text-muted);
-  }
-  .edit-form textarea {
-    min-height: 240px;
-  }
-  .form-actions {
-    margin-top: 1.5rem;
-    display: flex;
-    gap: 0.6rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .back-link {
-    font-size: 0.82rem;
-    color: var(--text-muted);
-    text-decoration: none;
-    margin-right: auto;
-  }
-  .back-link:hover { color: var(--text); }
-{% endblock %}
-
+{% from "_icons.html" import icon %}
+{% block title %}{{ "New document" if is_new else doc.title }} · Engram{% endblock %}
+{% set pf = prefill or {} %}
+{% set cur_privacy = pf.privacy or (doc.privacy if doc else 'normal') %}
+{% block head %}<style>
+textarea.editor { width:100%; resize:vertical; font-family:var(--mono); font-size:13px; line-height:1.75; min-height:620px; border:0; border-radius:0; padding:14px 16px; }
+.cal { flex:none; width:46px; text-align:center; border-radius:7px; background:var(--panel); padding:4px 0; display:flex; flex-direction:column; }
+.cal .m { font-size:10px; font-weight:600; color:var(--red); } .cal .d { font-family:var(--serif); font-size:22px; font-weight:600; line-height:1; }
+</style>{% endblock %}
 {% block body %}
-<div class="edit-header">
-  <h1>{{ "New document" if is_new else doc.title }}</h1>
-  <a href="/api/admin" class="back-link">← Back to documents</a>
+<div class="wrap">
+  <nav aria-label="Breadcrumb" class="small muted inline"><a href="/admin">Documents</a>
+    {% if not is_new %}<span aria-hidden="true">/</span><a href="/admin?type={{ doc.type }}">{{ doc.type }}</a><span aria-hidden="true">/</span><span class="mono">{{ doc.slug.split('/', 1)[1] if '/' in doc.slug else doc.slug }}</span>{% endif %}</nav>
+
+  {% if error %}<div class="callout bad" role="alert">{{ error }}</div>{% endif %}
+
+  <form method="post" action="{{ '/api/admin/new' if is_new else '/api/admin/' ~ doc.slug }}" id="doc-form" class="stack" style="gap:20px">
+    <header class="page-head">
+      <div style="flex:1 1 420px;min-width:0">
+        <label class="label" for="doc-title">Title</label>
+        <input id="doc-title" name="title" required value="{{ pf.title if pf.title is defined and pf.title else (doc.title if doc else '') }}"
+               style="display:block;width:100%;margin-top:4px;border:0;border-bottom:1px solid var(--line-strong);background:transparent;font-family:var(--serif);font-size:34px;font-weight:600;color:var(--ink);padding:4px 0 8px;outline:none">
+      </div>
+      <div class="inline">
+        {% if not is_new %}<span class="small muted inline"><span class="dot ok"></span>Last edit by {{ doc.updated_by or "import" }}, {{ doc.updated_at|ago }}</span>
+        <button class="btn danger" type="submit" formaction="/api/admin/{{ doc.slug }}/delete" formnovalidate
+                onclick="return confirm('Delete this document permanently? Its attachments go too.')">Delete</button>{% endif %}
+        <button class="btn primary" type="submit">{{ "Create" if is_new else "Save" }} <span class="mono tiny" style="opacity:.7">⌘S</span></button>
+      </div>
+    </header>
+
+    <div class="row-wrap">
+      <section class="card flush grow-3">
+        <div class="between small muted" style="padding:12px 16px;border-bottom:1px solid var(--line)">
+          <span><span class="mono" style="color:var(--accent)">Key: value</span> lines at the top become fields · a line like <span class="mono" style="color:var(--blue)">Summary:</span> starts a section</span>
+          <span id="wc"></span>
+        </div>
+        <label class="sr" for="content">Content</label>
+        <textarea id="content" name="content" class="input editor" required spellcheck="true">{{ pf.content if pf.content else (doc.content if doc else '') }}</textarea>
+      </section>
+
+      <aside class="grow-1 stack" style="gap:14px" aria-label="What Engram sees">
+        <div class="label">What Engram sees</div>
+
+        <section class="card stack" style="gap:12px">
+          <label class="field"><span class="label">Type</span>
+            <input class="input" name="type" list="type-list" required value="{{ pf.type or (doc.type if doc else request.query_params.get('type', 'note')) }}" pattern="[a-z][a-z0-9\-]{1,39}" title="lowercase letters, digits and hyphens">
+            <datalist id="type-list">{% for t in types %}<option value="{{ t }}">{% endfor %}</datalist></label>
+          <label class="field"><span class="label">New type? Describe it in one line</span>
+            <input class="input" name="type_description" value="{{ pf.type_description or '' }}" placeholder="Only needed for a type not in the list"></label>
+          {% if is_new %}<label class="field"><span class="label">Slug (optional)</span><input class="input mono" name="slug" placeholder="type/short-name, made from the title if empty"></label>{% endif %}
+          <label class="field"><span class="label">Tags</span><input class="input" name="tags" value="{{ pf.tags or (doc.tags|join(', ') if doc else '') }}" placeholder="comma, separated"></label>
+          <div class="field"><span class="label" id="priv-l">Privacy</span>
+            <div class="seg" role="radiogroup" aria-labelledby="priv-l" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+              {% for p in privacy_levels %}<label><input type="radio" name="privacy" value="{{ p }}" {{ 'checked' if p == cur_privacy }}>{{ p|capitalize }}</label>{% endfor %}
+            </div>
+            <span class="small muted" id="priv-help"></span>
+          </div>
+          {% if privacy_hint %}<div class="callout small">{{ privacy_hint }}</div>{% endif %}
+        </section>
+
+        {% if not is_new %}
+        <section class="card stack" style="gap:10px">
+          <h3>Tracked dates</h3>
+          {% for i in tracked %}
+          {% set d = i.date.split('-') %}
+          <div class="inline" style="flex-wrap:nowrap;padding:10px;border-radius:10px;background:var(--accent-soft)">
+            <span class="cal"><span class="m">{{ ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d[1]|int - 1] }}</span><span class="d">{{ d[2]|int }}</span></span>
+            <span style="flex:1" class="small"><b>{{ i.label }}</b>{% if i.turns %} · turns {{ i.turns }}{% endif %}<br><span class="muted">{{ i.date }}</span></span>
+            <span class="chip dark">{% if i.days_left == 0 %}today{% elif i.days_left > 0 %}in {{ i.days_left }} days{% else %}overdue{% endif %}</span>
+          </div>
+          {% else %}<p class="small muted">None in the fields at the top. Add a line like <code>Due: 2026-10-07</code> or <code>Expires: 14 Mar 2027</code>.</p>{% endfor %}
+          {% for u in unreadable %}<div class="callout bad small">“{{ u.field }}: {{ u.value }}” isn't a date Engram can read. Try 2027-03-14 or 14 Mar 2027.</div>{% endfor %}
+          {% for b in body_dates %}
+          <div class="callout small stack" style="gap:8px;flex-direction:column">
+            <span><b>Line {{ b.line }} looks like a date</b>: “{{ b.field }}: {{ b.value }}”{% if b.weekday_conflict %}. {{ b.date }} is a <b>{{ b.weekday_conflict }}</b>, check which day was meant{% endif %}. It's inside the text, so it isn't tracked.</span>
+            <span class="inline"><button type="button" class="btn sm" data-api="POST /api/documents/{{ doc.slug }}/track-date" data-body='{"field": "{{ 'Due' if b.label == 'due' else b.field }}", "date": "{{ b.date }}"}'>Track {{ b.date }}</button></span>
+          </div>
+          {% endfor %}
+        </section>
+
+        <section class="card stack" style="gap:10px">
+          <div class="between"><h3>Fields</h3><span class="small muted">{{ doc.doc_metadata|length }} found</span></div>
+          {% if doc.doc_metadata %}<dl class="kv small">{% for k, v in doc.doc_metadata.items() %}<dt style="color:var(--accent);font-weight:600">{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+          {% else %}<p class="small muted">No <code>Key: value</code> lines at the top.</p>{% endif %}
+          {% if doc.sections %}<p class="small muted">Sections: {{ doc.sections.keys()|join(" · ") }}</p>{% endif %}
+        </section>
+
+        <section class="card stack" style="gap:10px">
+          <h3>Attachments</h3>
+          {% for a in attachments %}
+          <div class="inline" style="flex-wrap:nowrap" id="att-{{ a.id }}">
+            <a href="/api/admin/attachments/{{ a.id }}" target="_blank" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">{{ icon("clip") }} {{ a.filename }}</a>
+            <span class="tiny muted">{{ (a.size / 1024)|round(1) }} KB · {{ a.text|length|num }} chars</span>
+            <button type="button" class="btn sm danger" data-api="POST /api/admin/attachments/{{ a.id }}/delete" data-confirm="Remove {{ a.filename }}?" data-then="remove:#att-{{ a.id }}|toast:Removed">Remove</button>
+          </div>
+          {% endfor %}
+          <label class="stack" style="gap:6px;align-items:center;padding:20px 14px;border:1.5px dashed var(--line-strong);border-radius:10px;text-align:center;cursor:pointer" id="drop">
+            {{ icon("clip") }}<b class="small">Drop a file or browse</b>
+            <span class="tiny muted">PDFs are read, images are OCR'd, and the text becomes searchable with this document. Max 20 MB.</span>
+            <input type="file" id="file-input" class="sr">
+          </label>
+        </section>
+
+        <section class="card stack" style="gap:8px">
+          <h3>Linked topics</h3>
+          <div class="inline">{% for t in topics %}<a class="chip blue" href="/topics/{{ t }}">{{ t }}</a>{% else %}<span class="small muted">No known topics mentioned.</span>{% endfor %}</div>
+        </section>
+        {% endif %}
+      </aside>
+    </div>
+  </form>
 </div>
-
-
-{% if error %}
-  <div class="banner banner-error">{{ error }}</div>
-{% endif %}
-
-<form method="post"
-  action="{{ '/api/admin/new' if is_new else '/api/admin/' + doc.slug }}"
-  class="edit-form">
-
-  <label>Type <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(pick one, or type a new one and describe it below)</span>
-    <input type="text" name="type" list="doc-types" required value="{{ '' if is_new else doc.type }}" placeholder="e.g. note, health, project">
-    <datalist id="doc-types">{% for t in types %}<option value="{{ t }}">{% endfor %}</datalist>
-  </label>
-  <label>New type description <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(only when creating a new type)</span>
-    <input type="text" name="type_description" placeholder="e.g. Recipes I cook">
-  </label>
-  <label>Privacy
-    <select name="privacy">
-      {% for p in privacy_levels %}<option value="{{ p }}" {% if (is_new and p == 'normal') or (not is_new and doc.privacy == p) %}selected{% endif %}>{{ p }}</option>{% endfor %}
-    </select>
-    <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">normal: used everywhere · private: never in automatic recall/search, only when asked for · local-only: private, and hidden from web assistants on the public link</span>
-  </label>
-
-  <label>Slug <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(leave blank on create to auto-generate)</span>
-    <input type="text" name="slug"
-      value="{{ '' if is_new else doc.slug }}"
-      {% if not is_new %}readonly{% endif %}
-      placeholder="e.g. project/my-project">
-  </label>
-
-  <label>Title
-    <input type="text" name="title"
-      value="{{ '' if is_new else doc.title }}"
-      required placeholder="Document title">
-  </label>
-
-  <label>Tags <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">(comma-separated)</span>
-    <input type="text" name="tags"
-      value="{{ '' if is_new else (doc.tags | join(', ')) }}"
-      placeholder="e.g. python, backend, api">
-  </label>
-
-  <label>Content <span style="font-weight:400;text-transform:none;font-size:0.78rem;color:var(--text-muted)">
-    (<code>Key: value</code> lines at the top become fields; a line like <code>Summary:</code> starts a section)</span>
-    <textarea name="content" required style="min-height:420px">{{ '' if is_new else doc.content }}</textarea>
-  </label>
-
-  {% if not is_new and (doc.doc_metadata or doc.sections) %}
-  <div class="banner" style="font-size:0.82rem">
-    {% if doc.doc_metadata %}<b>Fields:</b> {% for k, v in doc.doc_metadata.items() %}{{ k }} = {{ v }}{{ "" if loop.last else " · " }}{% endfor %}<br>{% endif %}
-    {% if doc.sections %}<b>Sections:</b> {{ doc.sections.keys() | join(", ") }}{% endif %}
-    <span style="color:var(--text-muted)"> — derived from the text on every save</span>
-  </div>
-  {% endif %}
-
-  <div class="form-actions">
-    <button type="submit" class="btn-primary">Save</button>
-    {% if not is_new %}
-      <button type="submit"
-        formaction="/api/admin/{{ doc.slug }}/delete"
-        formmethod="post"
-        class="btn-danger"
-        onclick="return confirm('Delete this document permanently?')">Delete</button>
-    {% endif %}
-  </div>
-</form>
-
-{% if not is_new %}
-<h2 style="margin-top:2rem">Attachments</h2>
-<p class="muted" style="font-size:0.82rem">PDFs, scans, photos, text files (max 20 MB). Their text is extracted
-  (OCR for images) and searched with this document; they share its privacy.</p>
-<table><tbody>
-{% for a in attachments or [] %}
-  <tr><td><a href="/api/admin/attachments/{{ a.id }}" target="_blank">{{ a.filename }}</a></td>
-      <td class="muted">{{ (a.size / 1024) | round(1) }} KB · {{ a.text | length }} chars of text</td>
-      <td><form method="post" action="/api/admin/attachments/{{ a.id }}/delete" style="margin:0">
-        <button class="btn-danger" onclick="return confirm('Remove {{ a.filename }}?')">Remove</button></form></td></tr>
-{% else %}<tr><td class="empty-state">No files attached.</td></tr>{% endfor %}
-</tbody></table>
-<form method="post" action="/api/admin/{{ doc.slug }}/attachments" enctype="multipart/form-data" style="margin-top:.8rem">
-  <input type="file" name="file" required>
-  <button type="submit" class="btn-primary">Attach</button>
-</form>
-{% endif %}
 {% endblock %}
+{% block scripts %}<script>
+const HELP = { normal: 'Used everywhere: automatic recall, search and every assistant.',
+  private: 'Never in automatic recall or search. Listed by title, opened only when asked for by name.',
+  'local-only': 'Like private, and invisible to anything reaching Engram through the public link.' };
+const help = document.getElementById('priv-help');
+const sync = () => { const c = document.querySelector('[name=privacy]:checked'); help.textContent = c ? HELP[c.value] : ''; };
+document.querySelectorAll('[name=privacy]').forEach((r) => r.addEventListener('change', sync)); sync();
+const ta = document.getElementById('content'), wc = document.getElementById('wc');
+const count = () => { wc.textContent = (ta.value.trim().split(/\s+/).filter(Boolean).length).toLocaleString() + ' words'; };
+ta.addEventListener('input', count); count();
+let dirty = false; ta.addEventListener('input', () => { dirty = true; });
+document.getElementById('doc-form').addEventListener('submit', () => { dirty = false; });
+window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); document.getElementById('doc-form').requestSubmit(); } });
+{% if not is_new %}
+async function upload(file) {
+  const fd = new FormData(); fd.append('file', file);
+  Engram.toast('Uploading ' + file.name + '…');
+  const r = await fetch('/api/admin/{{ doc.slug }}/attachments', { method: 'POST', body: fd, headers: { Accept: 'application/json' } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { Engram.toast(j.detail || ('Upload failed: ' + r.status), 'error'); return; }
+  Engram.toast(`${j.filename}: ${j.extraction} (${j.text_chars.toLocaleString()} characters)`);
+  setTimeout(() => location.reload(), 900);
+}
+const drop = document.getElementById('drop');
+document.getElementById('file-input').addEventListener('change', (e) => e.target.files[0] && upload(e.target.files[0]));
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.style.background = 'var(--sunk)'; });
+drop.addEventListener('dragleave', () => { drop.style.background = ''; });
+drop.addEventListener('drop', (e) => { e.preventDefault(); drop.style.background = ''; if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+{% endif %}
+</script>{% endblock %}

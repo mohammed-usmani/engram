@@ -104,3 +104,67 @@ def format_line(item: dict) -> str:
     when = "today" if n == 0 else "tomorrow" if n == 1 else f"in {n} days" if n > 0 else f"OVERDUE by {-n} days"
     turns = f", turns {item['turns']}" if "turns" in item else ""
     return f"- {item['title']} — {item['label']} {item['date']} ({when}{turns}) [d:{item['slug']}]"
+
+
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_BODY_DATE = re.compile(r"^\s*[-*]?\s*(" + "|".join(sorted({*ONE_OFF, *YEARLY}, key=len, reverse=True))
+                        + r")\s*:\s*(.+?)\s*\.?\s*$", re.I)
+
+
+def weekday_conflict(value: str, d: date) -> str | None:
+    """'Wednesday 8 Oct 2026' when 8 Oct is a Thursday -> the weekday it really is."""
+    named = next((w for w in _WEEKDAYS if re.search(rf"\b{w}\b", value, re.I)), None)
+    actual = _WEEKDAYS[d.weekday()]
+    return actual.title() if named and named != actual else None
+
+
+def _strip_weekday(value: str) -> str:
+    return re.sub(r"\b(" + "|".join(_WEEKDAYS) + r")\b,?\s*", "", value, flags=re.I).strip()
+
+
+def body_dates(content: str, metadata: dict) -> list[dict]:
+    """Date-like lines inside a document's body (not its top fields), which are therefore not tracked."""
+    tracked = {k.strip().lower() for k in (metadata or {})}
+    tracked_labels = {ONE_OFF.get(k) or YEARLY.get(k) for k in tracked} - {None}
+    out = []
+    for n, line in enumerate((content or "").splitlines(), 1):
+        m = _BODY_DATE.match(line)
+        if not m or n <= len(metadata or {}) + 1 and m.group(1).lower() in tracked:
+            continue
+        value = m.group(2)
+        d, yearless = parse_date(_strip_weekday(value))
+        if d is None:
+            continue
+        k = m.group(1).lower()
+        out.append({"line": n, "field": m.group(1), "value": value, "date": d.isoformat(), "yearless": yearless,
+                    "label": ONE_OFF.get(k) or YEARLY.get(k), "weekday_conflict": weekday_conflict(value, d)})
+    return [o for o in out if o["field"].lower() not in tracked and o["label"] not in tracked_labels]
+
+
+async def untracked(session: AsyncSession, limit: int = 20) -> list[dict]:
+    """Body dates across readable documents, newest documents first."""
+    docs = (await session.execute(select(ContextDocument).where(readable(ContextDocument.privacy))
+                                  .order_by(ContextDocument.updated_at.desc()))).scalars()
+    out = []
+    for doc in docs:
+        for b in body_dates(doc.content, doc.doc_metadata):
+            if b["yearless"] or date.fromisoformat(b["date"]) >= _today() - timedelta(days=_OVERDUE_DAYS):
+                out.append({**b, "slug": doc.slug, "title": doc.title})
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+def add_field(content: str, metadata: dict, field: str, value: str) -> str:
+    """Insert `Field: value` at the end of the top `Key: value` block (or replace an existing one)."""
+    lines = (content or "").splitlines()
+    rx = re.compile(rf"^{re.escape(field)}\s*:", re.I)
+    for i, line in enumerate(lines[:max(len(metadata or {}), 0) + 1]):
+        if rx.match(line):
+            lines[i] = f"{field}: {value}"
+            return "\n".join(lines) + "\n"
+    end = 0
+    while end < len(lines) and re.match(r"^[A-Z][A-Za-z0-9 &/'\-]{1,60}:\s+\S", lines[end]):
+        end += 1
+    lines.insert(end, f"{field}: {value}")
+    return "\n".join(lines) + "\n"

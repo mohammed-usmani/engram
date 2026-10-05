@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Cleanup · Engram{% endblock %}
+{% block head %}
+<style>
+  .tabs { align-self: flex-start; max-width: 100%; }
+  .tabs .n { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 14px;
+          background: var(--blue-soft); color: var(--blue-ink); cursor: pointer; }
+  .pill:has(input:not(:checked)) { background: var(--sunk); color: var(--muted); }
+  .pill input { width: 15px; height: 15px; margin: 0; }
+  .pick { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; cursor: pointer;
+          background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+  .pick:has(input:checked) { background: var(--paper); box-shadow: 0 0 0 1.5px var(--ink); }
+  .pick input { margin: 2px 0 0; }
+  .line-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--sunk); font-size: 13px; }
+  .line-row .select { min-height: 38px; font-size: 13px; }
+  section[id] { scroll-margin-top: 16px; }
+</style>
+{% endblock %}
+{% block body %}
+{% set odd_kinds = kinds | rejectattr("canon") | list %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Cleanup</h1>
+      <div class="sub">Suggestions only: nothing changes until you confirm. Merging keeps every event and records the old name as an alias, so assistants still find it.</div></div>
+  </header>
+
+  <nav class="seg tabs" aria-label="Cleanup sections">
+    <a href="#merge">Same thing, two names <span class="n">{{ merges|length }}</span></a>
+    <a href="#dupes">Duplicate events <span class="n">{{ dupes|length }} {{ "pair" if dupes|length == 1 else "groups" if dupes|length else "" }}</span></a>
+    <a href="#kinds">Topic kinds <span class="n">{{ kinds|length }} → {{ canon|length }}</span></a>
+    <a href="#once">Mentioned once <span class="n">{{ once|length }}</span></a>
+  </nav>
+
+  {% if me %}
+  <section class="callout info" aria-labelledby="h-me" style="align-items:center;flex-wrap:wrap">
+    <div style="flex:1 1 320px"><strong id="h-me">Is this you?</strong>
+      <span class="small">{{ me.name }} is the person in {{ me.n }} events. Marking it as you keeps recall from boosting or summarizing it: your profile already covers you.</span></div>
+    <button class="btn sm primary" data-api="PUT /api/settings/recall"
+            data-body='{{ {"self_entity": me.slug, "pinned_cap": recall.get("pinned_cap")} | tojson }}' data-then="reload">Yes, that's me</button>
+  </section>
+  {% endif %}
+
+  {# ------------------------------------------------ same thing, two names #}
+  <section id="merge" class="stack" aria-labelledby="h-merge">
+    <h2 id="h-merge">Same thing, two names</h2>
+    {% for g in merges[:limits.m] %}
+    <form class="card" data-api="POST /api/cleanup/merge" data-body='{"merge": []}' data-then="reload" style="display:flex;flex-wrap:wrap;gap:18px;align-items:center">
+      <div class="stack" style="flex:1 1 420px;gap:10px">
+        <div class="inline">
+          {% for i in g["items"] %}
+          <label class="pill"><input type="checkbox" name="merge" value="{{ i.slug }}" data-multi checked aria-label="Include {{ i.name }}">
+            <span style="font-weight:600">{{ i.name }}</span> <span class="mono tiny">{{ i.kind }} · {{ i.n }} event{{ "" if i.n == 1 else "s" }}</span></label>
+          {% endfor %}
+        </div>
+        <div class="small muted">{{ g.why }} Untick a name to leave it out.</div>
+      </div>
+      <div class="inline" style="align-items:flex-end">
+        <label class="field tiny muted">Keep as
+          <select class="select" name="keep">
+            {% for i in g["items"] %}<option value="{{ i.slug }}" {{ "selected" if i.slug == g.keep }}>{{ i.name }} ({{ i.kind }})</option>{% endfor %}
+          </select></label>
+        <button class="btn primary" type="submit">Merge</button>
+        <button class="btn" type="button" data-api="POST /api/cleanup/dismiss" data-body='{{ {"key": g.key} | tojson }}' data-then="reload">Not the same</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty">No topics look like the same thing under two names.</div>
+    {% endfor %}
+    {% if merges|length > limits.m %}<a class="btn" style="align-self:flex-start" href="?m={{ limits.m + 20 }}&d={{ limits.d }}&o={{ limits.o }}#merge">Show more ({{ merges|length - limits.m }} left)</a>{% endif %}
+  </section>
+
+  {# ------------------------------------------------ duplicate events #}
+  <section id="dupes" class="stack" aria-labelledby="h-dupes">
+    <h2 id="h-dupes">One event, written twice</h2>
+    {% for g in dupes[:limits.d] %}
+    <form class="card stack" data-api="POST /api/cleanup/dedupe" data-then="reload"
+          data-body='{{ {"remove": g["items"] | map(attribute="id") | list} | tojson }}'>
+      <div class="between"><strong>{{ g.kind | kindlabel | capitalize }}</strong>
+        <span class="small muted">{{ g.day | day }} · from {{ g.agents | join(", ") }}</span></div>
+      <fieldset class="stack" style="border:0;margin:0;padding:0;gap:8px">
+        <legend class="small" style="color:var(--ink-2);margin-bottom:8px">Keep the more accurate one. The others are removed; an outcome and topics are copied to the one you keep.</legend>
+        {% for e in g["items"] %}
+        <label class="pick"><input type="radio" name="keep" value="{{ e.id }}" data-type="int" {{ "checked" if e.id == g.keep }}>
+          <span class="stack" style="flex:1;gap:4px"><span style="font-size:14px">{{ e.summary }}</span>
+            <span class="mono tiny muted">e:{{ e.id }} · {{ e.occurred_at | hm }} · outcome: {{ e.outcome or "none" }}</span></span></label>
+        {% endfor %}
+      </fieldset>
+      <div class="inline">
+        <button class="btn primary" type="submit">Keep selected</button>
+        <button class="btn" type="button" data-api="POST /api/cleanup/dismiss" data-body='{{ {"key": g.key} | tojson }}' data-then="reload">They're different events</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="empty">No events look written twice.</div>
+    {% endfor %}
+    {% if dupes|length > limits.d %}<a class="btn" style="align-self:flex-start" href="?m={{ limits.m }}&d={{ limits.d + 20 }}&o={{ limits.o }}#dupes">Show more ({{ dupes|length - limits.d }} left)</a>{% endif %}
+  </section>
+
+  <div class="row-wrap">
+    {# ------------------------------------------------ kinds #}
+    <section id="kinds" class="card stack grow-1" aria-labelledby="h-kinds">
+      <h2 id="h-kinds">Topic kinds: {{ kinds|length }} in use, {{ canon|length }} expected</h2>
+      <div class="small muted">The extractor should only use {{ canon | join(", ") }}. Map the rest once, and new ones are folded in automatically. A topic whose new name already exists is merged into it.</div>
+      {% if odd_kinds %}
+      <form id="kinds-form" class="stack" style="gap:0">
+        {% for k in odd_kinds %}
+        <div class="line-row">
+          <span class="mono" style="flex:1">{{ k.kind }} <span class="muted">· {{ k.n }}</span></span>
+          <span aria-hidden="true" class="muted">→</span>
+          <select class="select" name="{{ k.kind }}" aria-label="Map kind {{ k.kind }}">
+            {% for c in canon %}<option value="{{ c }}" {{ "selected" if c == k.to }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+        <button class="btn primary" type="submit" style="align-self:flex-start;margin-top:10px">Apply mapping</button>
+      </form>
+      {% else %}
+      <div class="empty">Every topic uses one of the {{ canon|length }} kinds.</div>
+      {% endif %}
+    </section>
+
+    {# ------------------------------------------------ mentioned once #}
+    <section id="once" class="card stack grow-1" aria-labelledby="h-once">
+      <h2 id="h-once">{{ once|length|num }} topics mentioned once</h2>
+      <div class="small muted">Mostly file names, URLs and one-off features. Folding them into a parent topic keeps the events and makes recall sharper. Topics without a sensible parent are left alone.</div>
+      <form id="fold-form" data-api="POST /api/cleanup/fold" data-then="reload" data-confirm="Fold the selected topics into their parents? Their names become aliases." class="stack" style="gap:0">
+        {% for t in once[:limits.o] %}
+        <label class="line-row">
+          <input type="checkbox" name="items" data-multi data-type="json" {{ "checked" if t.into else "disabled" }}
+                 value='{{ {"slug": t.slug, "into": t.into} | tojson }}'>
+          <span style="flex:1"><span style="font-weight:600">{{ t.name }}</span> <span class="muted">· {{ t.kind }} · {{ t.n }} event{{ "" if t.n == 1 else "s" }}</span></span>
+          <span class="muted">{% if t.into %}into {{ t.into_name }}{% else %}no parent{% endif %}</span>
+        </label>
+        {% else %}
+        <div class="empty">Every topic has more than one event.</div>
+        {% endfor %}
+        {% if once %}
+        <div class="inline" style="margin-top:10px">
+          <button class="btn primary" type="submit" id="fold-btn">Fold selected</button>
+          {% if once|length > limits.o %}<a class="btn" href="?m={{ limits.m }}&d={{ limits.d }}&o={{ limits.o + 25 }}#once">Show more ({{ once|length - limits.o }} left)</a>{% endif %}
+        </div>
+        {% endif %}
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const kindsForm = document.getElementById('kinds-form');
+kindsForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = kindsForm.querySelector('button');
+  btn.disabled = true;
+  try {
+    const r = await Engram.api('POST', '/api/cleanup/kinds', { map: Engram.collect(kindsForm) });
+    Engram.toast(`Moved ${r.moved} topics, merged ${r.merged}`);
+    location.reload();
+  } catch (err) { Engram.toast(err.message, 'error'); btn.disabled = false; }
+});
+const foldForm = document.getElementById('fold-form'), foldBtn = document.getElementById('fold-btn');
+const foldCount = () => { if (foldBtn) foldBtn.textContent = `Fold ${foldForm.querySelectorAll('input[name=items]:checked').length} selected`; };
+foldForm?.addEventListener('change', foldCount);
+foldCount();
+</script>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ e.name }} · Engram{% endblock %}
+{% block head %}<style>
+.tl { display:flex; align-items:flex-end; gap:8px; min-width:620px; height:240px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+.tl .day { flex:1; display:flex; flex-direction:column-reverse; align-items:center; gap:3px; max-height:100%; overflow:hidden; }
+.tl .sq { display:block; width:100%; max-width:22px; height:10px; border-radius:3px; flex:none; }
+.tl .sq.k-task_done { background:#DDD6C8; }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <nav aria-label="Breadcrumb" class="small muted inline"><a href="/topics">Topics</a><span aria-hidden="true">/</span><span class="mono">{{ e.slug }}</span></nav>
+  <header class="page-head">
+    <div><h1>{{ e.name }}</h1>
+      <div class="sub">{{ e.kind }} · {{ total|num }} events{% if first %} · first {{ first|day }} · latest {{ last|ago }}{% endif %}{% if e.aliases %} · also called {{ e.aliases[:4]|join(", ") }}{% endif %}</div></div>
+    <div class="inline">
+      <button class="btn" data-open="#rename">Rename</button>
+      <button class="btn" data-open="#merge">Merge into…</button>
+      {% if e.kind == 'person' and e.slug != me %}<button class="btn" data-api="PUT /api/settings/recall" data-body='{"self_entity": "{{ e.slug }}", "pinned_cap": {{ cap|tojson }}}' data-then="toast:Saved: this topic is you|reload">This is me</button>{% endif %}
+      <a class="btn" href="/recall?situation={{ e.name|urlencode }}">Recall with this topic</a>
+    </div>
+  </header>
+
+  <section class="card stack">
+    <div class="between"><span class="label">Where things stand</span>
+      <span class="inline small muted">{{ "Summary is waiting for the next sleep pass" if e.dirty else "Written by the sleep pass" }}
+        <button class="btn sm" data-api="POST /api/topics/{{ e.slug }}/summarize" data-then="toast:Summary pass requested">Refresh</button></span></div>
+    {% if e.slug == me %}<p class="muted">This topic is you, so briefs never summarize it. Your profile covers you instead.</p>
+    {% elif e.digest %}<p style="font-family:var(--serif);font-size:21px;line-height:1.5">{{ e.digest }}</p>
+    {% else %}<p class="muted">No summary yet. Topics get one once they have at least two events.</p>{% endif %}
+    {% if agg %}<p class="small muted">{{ agg.split(" · outcomes:")[0] }}</p>{% endif %}
+    <div class="inline">
+      {% for c in counts %}<a class="kind k-{{ c.kind }}" style="min-width:0;text-decoration:none" href="/topics/{{ e.slug }}?kind={{ c.kind }}#events">{{ c.kind|kindlabel }} {{ c.n }}</a>{% endfor %}
+    </div>
+  </section>
+
+  <section class="card stack">
+    <div class="between"><h2>Timeline</h2><span class="small muted">One square per event · last 15 days{% if hidden %} · {{ hidden }} earlier events not shown{% endif %}</span></div>
+    <div class="scroll-x">
+      <div class="tl" role="img" aria-label="Events per day for the last 15 days">
+        {% for d in timeline %}<div class="day" title="{{ d.label }}: {{ d.blocks|length }} events">{% for k in d.blocks %}<span class="sq kind k-{{ k }}" style="min-width:0;padding:0"></span>{% endfor %}</div>{% endfor %}
+      </div>
+      <div class="inline" style="gap:8px;flex-wrap:nowrap;min-width:620px;padding-top:6px">{% for d in timeline %}<span class="tiny muted" style="flex:1;text-align:center">{{ d.label }}</span>{% endfor %}</div>
+    </div>
+  </section>
+
+  <div class="row-wrap">
+    <section class="card grow-3" id="events">
+      <div class="between" style="margin-bottom:6px"><h2>{{ "Latest events" if not kind else (kind|kindlabel)|capitalize ~ " events" }}</h2>
+        {% if kind %}<a class="small" href="/topics/{{ e.slug }}#events">Show all kinds</a>{% else %}<a class="small" href="/events?topic={{ e.slug|urlencode }}">All in Events</a>{% endif %}</div>
+      {% for x in events %}
+      <a class="list-row" href="/events?focus={{ x.id }}" style="text-decoration:none;color:var(--ink);align-items:baseline">
+        <span class="kind k-{{ x.kind }}">{{ x.kind|kindlabel }}</span>
+        <span style="flex:1;font-size:14px">{{ x.summary }}{% if x.outcome %}<br><span class="small" style="color:var(--green-ink)">Outcome: {{ x.outcome }}</span>{% endif %}</span>
+        <span class="small muted" style="white-space:nowrap">{{ x.occurred_at|day }}</span></a>
+      {% else %}<p class="muted">No events.</p>{% endfor %}
+    </section>
+    <div class="grow-1 stack" style="gap:20px">
+      <section class="card stack">
+        <div class="between"><h2>Lessons</h2><a class="small" href="/lessons?topic={{ e.slug|urlencode }}">All</a></div>
+        {% for l in lessons %}
+        <div class="stack" style="gap:6px;padding-bottom:12px;border-bottom:1px solid var(--sunk)">
+          <span style="font-size:14px">{{ l.lesson }}</span>
+          <span class="inline tiny muted"><span class="bar" style="width:70px;height:5px"><span style="width:{{ (l.confidence * 100)|round|int }}%;background:var(--green)"></span></span>
+            confidence {{ "%.2f"|format(l.confidence) }} · {{ l.ev }} events</span>
+        </div>
+        {% else %}<p class="muted small">No lessons yet. The sleep pass writes them once patterns repeat.</p>{% endfor %}
+      </section>
+      <section class="card stack">
+        <h2>Often together</h2>
+        {% for r in related %}
+        <a href="/topics/{{ r.slug }}" class="between" style="font-size:14px;text-decoration:none;color:var(--ink)"><span><b>{{ r.name }}</b> <span class="muted">· {{ r.kind }}</span></span><span class="muted">{{ r.n }} shared</span></a>
+        {% else %}<p class="muted small">Nothing yet.</p>{% endfor %}
+      </section>
+    </div>
+  </div>
+</div>
+
+<dialog id="rename" aria-labelledby="rename-h">
+  <form class="stack" data-api="PATCH /api/topics/{{ e.slug }}" data-then="reload">
+    <h3 id="rename-h">Rename topic</h3>
+    <p class="small muted">The old name is kept as an alias, so text that mentions it still matches.</p>
+    <label class="field"><span class="label">Name</span><input class="input" name="name" value="{{ e.name }}" required></label>
+    <div class="inline" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Rename</button></div>
+  </form>
+</dialog>
+<dialog id="merge" aria-labelledby="merge-h">
+  <form class="stack" data-api="POST /api/cleanup/merge" data-body='{"merge": ["{{ e.slug }}"]}' data-then="redirect-to:url" id="merge-form">
+    <h3 id="merge-h">Merge “{{ e.name }}” into another topic</h3>
+    <p class="small muted">All {{ total }} events, lessons and facts move to the topic you pick; “{{ e.name }}” becomes one of its aliases.</p>
+    <label class="field"><span class="label">Merge into</span>
+      <input class="input" name="keep" list="topic-options" placeholder="Start typing a topic name" required autocomplete="off">
+      <datalist id="topic-options"></datalist></label>
+    <div class="inline" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Merge</button></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script>
+const inp = document.querySelector('#merge-form [name=keep]'), list = document.getElementById('topic-options');
+let t;
+inp.addEventListener('input', () => {
+  clearTimeout(t);
+  t = setTimeout(async () => {
+    const rows = await Engram.api('GET', '/api/topics?q=' + encodeURIComponent(inp.value));
+    list.innerHTML = '';
+    rows.filter((r) => r.slug !== {{ e.slug|tojson }}).forEach((r) => {
+      const o = document.createElement('option'); o.value = r.slug; o.label = `${r.name} · ${r.kind} · ${r.n} events`; list.appendChild(o);
+    });
+  }, 200);
+});
+document.getElementById('merge-form').addEventListener('engram:done', (ev) => { ev.detail.url = '/topics/' + encodeURIComponent(inp.value); });
+</script>{% endblock %}

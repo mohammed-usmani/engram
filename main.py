@@ -18,7 +18,10 @@ from src.routers import documents, admin, chat, memories, settings as settings_r
 from src.seed.loader import run_seed
 from src.services.memory import list_memories as _list_all_memories
 from src.memory.api import AuthMiddleware, router as memory_router
-from src.memory.dashboard import router as dashboard_router
+from src.ui import pages as ui_pages, system_api, core_api, cleanup as ui_cleanup, memory_pages as ui_memory, ask as ui_ask
+from src.ui.templating import templates
+from fastapi.staticfiles import StaticFiles
+from src import settings_store
 from src.memory.worker import run_worker
 from src.mcp_server import mcp
 from src import oauth
@@ -37,6 +40,7 @@ async def lifespan(app: FastAPI):
             summary = await run_seed(session, app_settings.data_dir)
             await session.commit()
             log.info("seed summary: %s", summary)
+        await settings_store.load(session)  # Settings-page choices (keys, models per job) before any work runs
     stop = asyncio.Event()
     worker = asyncio.create_task(run_worker(stop)) if os.environ.get("MEMORY_WORKER", "1") != "0" else None
     async with mcp.session_manager.run():
@@ -50,47 +54,25 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Engram", lifespan=lifespan)
 app.add_middleware(AuthMiddleware)
 app.include_router(memory_router)
-app.include_router(dashboard_router)
+app.include_router(ui_pages.router)
+app.include_router(system_api.router)
+app.include_router(core_api.router)
+app.include_router(ui_cleanup.router)
+app.include_router(ui_memory.router)
+app.include_router(ui_ask.router)
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "src" / "static")), name="static")
 app.include_router(admin.reseed_router)
 app.include_router(admin.router)
 app.include_router(chat.router)
-app.include_router(memories.router)
 app.include_router(documents.router)
+app.include_router(memories.router)
 app.include_router(settings_router.router)
 
 
-_templates = Jinja2Templates(directory=str(Path(__file__).parent / "src" / "templates"))
-
-
-@app.get("/chat", response_class=HTMLResponse)
-async def chat_page(request: Request):
-    return _templates.TemplateResponse("chat.html", {"request": request, "active_page": "chat"})
-
-
-@app.get("/memories", response_class=HTMLResponse)
-async def memories_page(
-    request: Request,
-    category: str | None = None,
-    session: AsyncSession = Depends(get_session),
-):
-    mems = await _list_all_memories(session, category=category)
-    return _templates.TemplateResponse("memories.html", {
-        "request": request,
-        "memories": mems,
-        "categories": [c.value for c in MemoryCategory],
-        "category": category,
-        "active_page": "memories",
-    })
-
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
-    return _templates.TemplateResponse("settings.html", {"request": request, "active_page": "settings"})
-
-
 @app.get("/admin", include_in_schema=False)
-async def admin_shortcut():
-    return RedirectResponse("/api/admin")
+async def admin_shortcut(request: Request):
+    q = request.url.query
+    return RedirectResponse("/api/admin" + (f"?{q}" if q else ""))
 
 
 def _safe_next(nxt: str) -> str:
@@ -99,14 +81,14 @@ def _safe_next(nxt: str) -> str:
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 async def login_page(request: Request, next: str = "/admin"):
-    return _templates.TemplateResponse("login.html", {"request": request, "next": _safe_next(next), "error": None})
+    return templates.TemplateResponse(request, "login.html", {"next": _safe_next(next), "error": None})
 
 
 @app.post("/login", include_in_schema=False)
 async def login(request: Request, admin_token: str = Form(...), next: str = Form("/admin")):
     if not app_settings.admin_token or not hmac.compare_digest(admin_token.strip(), app_settings.admin_token):
-        return _templates.TemplateResponse("login.html", {"request": request, "next": _safe_next(next),
-                                                          "error": "Wrong token."}, status_code=401)
+        return templates.TemplateResponse(request, "login.html", {"next": _safe_next(next), "error": "Wrong token."},
+                                          status_code=401)
     resp = RedirectResponse(_safe_next(next), status_code=303)
     secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
     resp.set_cookie("admin_token", app_settings.admin_token, max_age=30 * 24 * 3600,

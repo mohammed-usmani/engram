@@ -1,110 +1,93 @@
 {% extends "base.html" %}
-{% block title %}Documents — Context{% endblock %}
-
-{% block extra_css %}
-  .list-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    margin-bottom: 1.2rem;
-    padding-bottom: 0.8rem;
-    border-bottom: 1px solid var(--border);
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-  .list-header h1 { margin-bottom: 0; }
-  .list-controls {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .list-controls select, .list-controls input[type=text] {
-    font-size: 0.85rem;
-    padding: 0.35rem 0.5rem;
-    width: auto;
-  }
-  .list-controls select { min-width: 130px; }
-  .list-controls input[type=text] { min-width: 200px; }
-  .list-controls button {
-    font-size: 0.82rem;
-    padding: 0.35rem 0.8rem;
-  }
-  .list-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-  .doc-count {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  }
-  td a {
-    color: var(--text);
-    text-decoration: none;
-    font-weight: 600;
-  }
-  td a:hover { color: var(--accent); text-decoration: underline; }
-{% endblock %}
-
+{% from "_icons.html" import icon %}
+{% block title %}Documents · Engram{% endblock %}
+{% macro url(type=type, privacy=privacy, has=has, sort=sort, q=q) -%}
+/admin?type={{ type }}&privacy={{ privacy }}&has={{ has }}&sort={{ sort }}&q={{ q|urlencode }}
+{%- endmacro %}
 {% block body %}
-<div class="list-header">
-  <h1>Documents</h1>
-  <div class="list-controls">
-    <form method="get" action="/api/admin" style="display:contents">
-      <select name="type">
-        <option value="">All types</option>
-        {% for t in types %}<option value="{{ t }}" {% if type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
-      </select>
-      <input type="text" name="q" value="{{ q or '' }}" placeholder="Full-text search…">
-      <button type="submit">Filter</button>
-    </form>
-    <a href="/api/admin/new" class="btn btn-primary">+ New</a>
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Documents</h1><div class="sub">The editable source of truth. Assistants read and write these too.</div></div>
+    <div class="inline">
+      <form method="post" action="/api/admin/import" title="Adds files from DATA_DIR that aren't here yet. Never overwrites your edits.">
+        <button class="btn" type="submit">Import new files</button></form>
+      <a class="btn" href="/api/admin/dump?format=md">Export all</a>
+      <a class="btn primary" href="/api/admin/new">{{ icon("plus") }}New document</a>
+    </div>
+  </header>
+  {% if import_summary %}<div class="callout info">Import: {{ import_summary }}</div>{% endif %}
+
+  <section class="stack" aria-labelledby="h-tpl">
+    <div class="inline"><h2 id="h-tpl" style="font-size:19px">Start from a template</h2><span class="small muted">Type, privacy and date fields already set</span></div>
+    <div class="grid-auto" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">
+      {% for key, t in templates_.items() %}
+      <a href="/api/admin/new?template={{ key }}" class="card tight stack" style="gap:8px;text-decoration:none;color:var(--ink)">
+        <span class="between"><b>{{ t.title or "Person" }}</b>
+          <span class="chip {{ 'dark' if t.privacy == 'local-only' else 'amber' if t.privacy == 'private' else '' }}">{{ t.privacy }}</span></span>
+        <span class="mono tiny soft" style="white-space:pre-line;padding:8px 10px">{{ t.content.split("\n\n")[0] }}</span>
+        <span class="tiny muted">type · {{ t.type }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="row-wrap">
+    <aside aria-label="Filters" class="stack" style="flex:1 1 210px;max-width:100%;gap:18px">
+      <div class="stack" style="gap:2px">
+        <div class="label" style="padding:0 10px 6px">Type</div>
+        <a class="facet {{ 'on' if not type }}" href="{{ url(type='') }}"><span>All documents</span><span class="n">{{ total }}</span></a>
+        {% for t in used_types %}<a class="facet {{ 'on' if type == t.name }}" href="{{ url(type=t.name) }}" title="{{ t.description }}"><span>{{ t.name }}</span><span class="n">{{ t.count }}</span></a>{% endfor %}
+      </div>
+      {% if empty_types %}
+      <div class="stack" style="gap:6px">
+        <div class="label" style="padding:0 10px">Everyday · empty so far</div>
+        <div class="inline" style="padding:0 10px;gap:6px">
+          {% for t in empty_types %}<a class="chip" style="border:1px dashed var(--line-strong);background:transparent" href="/api/admin/new?type={{ t.name }}" title="{{ t.description }}">{{ t.name }}</a>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="stack" style="gap:2px">
+        <div class="label" style="padding:0 10px 6px">Privacy</div>
+        {% for lvl, n in privacy_counts.items() %}<a class="facet {{ 'on' if privacy == lvl }}" href="{{ url(privacy='' if privacy == lvl else lvl) }}"><span>{{ lvl|capitalize }}</span><span class="n">{{ n }}</span></a>{% endfor %}
+      </div>
+      <div class="stack" style="gap:2px">
+        <div class="label" style="padding:0 10px 6px">Has</div>
+        <a class="facet {{ 'on' if has == 'attachments' }}" href="{{ url(has='' if has == 'attachments' else 'attachments') }}"><span>Attachments</span><span class="n">{{ n_attached }}</span></a>
+        <a class="facet {{ 'on' if has == 'dates' }}" href="{{ url(has='' if has == 'dates' else 'dates') }}"><span>Tracked dates</span><span class="n">{{ n_dated }}</span></a>
+      </div>
+    </aside>
+
+    <section class="card flush" style="flex:999 1 560px;min-width:0">
+      <form method="get" action="/admin" class="inline" style="padding:14px;border-bottom:1px solid var(--line)">
+        <input type="hidden" name="type" value="{{ type }}"><input type="hidden" name="privacy" value="{{ privacy }}"><input type="hidden" name="has" value="{{ has }}">
+        <label class="search">{{ icon("search") }}<span class="sr">Search documents</span>
+          <input type="search" name="q" value="{{ q }}" placeholder="Search titles, text and attached files"></label>
+        <label class="inline small muted">Sort
+          <select class="select" name="sort" onchange="this.form.submit()">
+            {% for v, l in [("updated", "Recently updated"), ("title", "Title"), ("type", "Type")] %}<option value="{{ v }}" {{ 'selected' if sort == v }}>{{ l }}</option>{% endfor %}
+          </select></label>
+        <button class="btn" type="submit">Search</button>
+      </form>
+      <div class="scroll-x">
+        <table class="t" style="min-width:640px">
+          <thead><tr><th scope="col" style="padding-left:16px">Document</th><th scope="col">Type</th><th scope="col">Privacy</th><th scope="col">Last edit</th></tr></thead>
+          <tbody>
+          {% for d in docs %}
+            <tr>
+              <td style="padding-left:16px"><a href="/api/admin/{{ d.slug }}" class="stack" style="gap:2px;text-decoration:none;color:var(--ink)">
+                <b style="font-size:14px">{{ d.title }}</b><span class="mono tiny muted">{{ d.slug }}{% if att_counts.get(d.id) %} · {{ att_counts[d.id] }} file{{ 's' if att_counts[d.id] != 1 }}{% endif %}</span></a></td>
+              <td><span class="chip">{{ d.type }}</span></td>
+              <td class="small">{% if d.privacy == 'normal' %}<span class="muted">normal</span>{% else %}<span class="chip {{ 'dark' if d.privacy == 'local-only' else 'amber' }}">{{ icon("lock", "icon") }}{{ d.privacy }}</span>{% endif %}</td>
+              <td class="small" style="white-space:nowrap"><b style="font-weight:500">{{ d.updated_by or "import" }}</b> <span class="muted">· {{ d.updated_at|ago }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="muted" style="padding:24px 16px">No documents match.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="small muted" style="padding:12px 16px">Showing {{ docs|length }} of {{ total }}</div>
+    </section>
   </div>
 </div>
-
-{% if import_summary %}
-  <div class="banner">Import: {{ import_summary }}</div>
-{% endif %}
-
-<div class="list-toolbar">
-  <span class="doc-count">{{ docs | length }} document{{ 's' if docs | length != 1 else '' }}</span>
-  <form method="post" action="/api/admin/import" title="Adds documents from DATA_DIR that aren't here yet. Never overwrites your edits.">
-    <button type="submit" style="font-size:0.8rem;padding:0.3rem 0.7rem;">Import new files</button>
-  </form>
-</div>
-
-{% if docs %}
-<table>
-  <thead>
-    <tr>
-      <th>Title</th>
-      <th>Type</th>
-      <th>Edited</th>
-      <th>Tags</th>
-      <th>Updated</th>
-      <th>Slug</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for d in docs %}
-    <tr>
-      <td><a href="/api/admin/{{ d.slug }}">{{ d.title }}</a></td>
-      <td><span class="tag">{{ d.type }}</span>{% if d.privacy != 'normal' %} <span class="tag" title="{{ 'Kept out of automatic recall and search' if d.privacy == 'private' else 'Private, and hidden from the public link' }}">🔒 {{ d.privacy }}</span>{% endif %}</td>
-      <td style="white-space:nowrap;color:var(--text-muted)">{{ d.updated_at.strftime('%Y-%m-%d') }}</td>
-      <td>{% for t in d.tags %}<span class="tag">{{ t }}</span> {% endfor %}</td>
-      <td>{{ d.updated_at.strftime('%Y-%m-%d') }}</td>
-      <td><code>{{ d.slug }}</code></td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-  <div class="empty-state">
-    <p>No documents found.</p>
-  </div>
-{% endif %}
 {% endblock %}

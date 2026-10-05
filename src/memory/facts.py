@@ -39,6 +39,15 @@ def _config() -> dict:
     }
 
 
+def table() -> str:
+    """The pgvector table mem0 keeps facts in (for counts and bulk queries mem0 has no API for)."""
+    import re
+    name = os.environ.get("MEM0_COLLECTION", "mem0_memories")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError(f"unsafe MEM0_COLLECTION {name!r}")
+    return name
+
+
 async def store() -> AsyncMemory:
     global _mem
     if _mem is None:
@@ -132,9 +141,28 @@ async def similar(text: str, top_k: int = 5) -> list[dict]:
     return out[:top_k]
 
 
+async def update_fact(fact_id: str, text: str | None = None, **metadata) -> None:
+    """mem0 merges metadata into the stored payload and re-embeds when the text changes."""
+    m = await store()
+    await m.update(fact_id, text=text, metadata=metadata or None)
+
+
+async def restore(fact_id: str) -> None:
+    """Undo supersede(): back in search, recall and the profile."""
+    m = await store()
+    await m.update(fact_id, metadata={"superseded_by": None, "valid_to": None}, expiration_date=None)
+
+
+async def profile_rows(limit: int = 15) -> list[dict]:
+    """Pinned facts first, then the most important, newest first."""
+    # all current facts: get_all's top_k caps the scan, and a pinned fact must never fall off it
+    rows = await all_facts(kinds=["fact", "preference"], limit=5000)
+    rows.sort(key=lambda f: (bool(f["metadata"].get("pinned")), int(f["metadata"].get("importance") or 3),
+                             f.get("updated_at") or ""), reverse=True)
+    return rows[:limit]
+
+
 async def profile(limit: int = 15) -> str:
     """The user's most important current facts and preferences. Built live, so a forgotten or
     superseded fact disappears from every brief immediately."""
-    rows = await all_facts(kinds=["fact", "preference"])
-    rows.sort(key=lambda f: (int(f["metadata"].get("importance", 3)), f.get("updated_at") or ""), reverse=True)
-    return "\n".join(f"- {f['memory']}" for f in rows[:limit])
+    return "\n".join(f"- {f['memory']}" for f in await profile_rows(limit))

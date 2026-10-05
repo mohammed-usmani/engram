@@ -69,3 +69,12 @@ async def test_upcoming_bad_days_and_rest(mcp_db, client):
     assert "days" in out["error"] and "fix" in out
     r = await client.get("/api/upcoming?days=30", headers={"host": "127.0.0.1:8001"})
     assert r.status_code == 200 and "items" in r.json()
+
+
+def test_body_dates_weekday_conflict_and_add_field():
+    meta = {"Type": "Interview record"}
+    found = dates.body_dates("Type: Interview record\n\nTake-home:\n- Deadline: Wednesday 8 Oct 2026.\n", meta)
+    assert found[0]["date"] == "2026-10-08" and found[0]["weekday_conflict"] == "Thursday" and found[0]["line"] == 4
+    assert dates.body_dates("Type: x\nDue: 2026-10-07\n\nNotes:\n- Deadline: 7 Oct 2026\n", {"Type": "x", "Due": "2026-10-07"}) == []
+    out = dates.add_field("Type: Interview record\nOutcome: Advanced\n\nNotes:\nhi\n", {"Type": 1, "Outcome": 1}, "Due", "2026-10-07")
+    assert out.splitlines()[:3] == ["Type: Interview record", "Outcome: Advanced", "Due: 2026-10-07"]

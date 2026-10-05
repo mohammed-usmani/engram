@@ -1,15 +1,17 @@
 {% extends "base.html" %}
+{% set bare = true %}
 {% block title %}Sign in · Engram{% endblock %}
-{% block body %}
-<div style="max-width:380px;margin:12vh auto;padding:0 16px">
-  <h1 style="font-family:var(--font-heading);margin-bottom:.5rem">Sign in</h1>
-  <p style="color:var(--text-muted);margin-bottom:1.5rem">Enter your Engram admin token to open the admin panel from this browser.</p>
-  {% if error %}<p style="color:#b00;margin-bottom:1rem">{{ error }}</p>{% endif %}
-  <form method="post" action="/login">
+{% block bare %}
+<main style="max-width:400px;margin:12vh auto;padding:0 16px" class="stack">
+  <div class="brand" style="padding:0"><span class="brand-mark">e</span><span class="brand-name">Engram</span></div>
+  <h1 style="font-size:32px">Sign in</h1>
+  <p class="muted">Enter your Engram admin token to open the admin panel in this browser.</p>
+  {% if error %}<div class="callout bad" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/login" class="stack">
     <input type="hidden" name="next" value="{{ next }}">
-    <input type="password" name="admin_token" placeholder="Admin token" autofocus required
-           style="width:100%;padding:.7rem;border:1px solid var(--border);border-radius:var(--radius);font:inherit">
-    <button type="submit" style="width:100%;margin-top:.8rem;padding:.7rem;border:2px solid var(--border-strong);background:var(--text);color:var(--bg);border-radius:var(--radius);font:inherit;cursor:pointer">Sign in</button>
+    <label class="field"><span class="label">Admin token</span>
+      <input class="input" type="password" name="admin_token" autofocus required autocomplete="current-password"></label>
+    <button type="submit" class="btn primary">Sign in</button>
   </form>
-</div>
+</main>
 {% endblock %}

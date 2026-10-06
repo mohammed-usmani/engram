@@ -68,9 +68,22 @@ async def teach(session: AsyncSession, name: str, steps: list[str], agent: str |
     return await facts.add_fact(body, kind="procedure", entities=list(mapping.values()), importance=4, agent=agent)
 
 
+APPLICATION_WINDOW_DAYS = 60  # re-mentioning an application (e.g. in a recap) isn't a new one
+
+
 async def _is_duplicate_episode(session: AsyncSession, kind: str, when: datetime, vec: list[float],
                                 entities: list[str]) -> bool:
-    """Same event re-mentioned: same kind, ±1 day, same entities, near-identical wording."""
+    """Same event re-mentioned: same kind, ±1 day, same entities, near-identical wording.
+    An application to a company already applied to in the last 60 days is the same application."""
+    companies = [e for e in entities if e.startswith("company:")]
+    if kind == "applied" and companies:
+        prior = (await session.execute(sql(
+            "select 1 from episodes where kind = 'applied' and entities ?| :c "
+            "and occurred_at between :a and :b limit 1"),
+            {"c": companies, "a": when - timedelta(days=APPLICATION_WINDOW_DAYS),
+             "b": when + timedelta(days=APPLICATION_WINDOW_DAYS)})).first()
+        if prior:
+            return True
     rows = (await session.execute(
         select(Episode.entities, 1 - Episode.embedding.cosine_distance(vec))
         .where(Episode.kind == kind, Episode.embedding.isnot(None),

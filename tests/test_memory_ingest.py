@@ -26,7 +26,7 @@ def _placeholder_text_is_grounded(request, monkeypatch):
     """These tests feed placeholder text ("...") to check field clean-up; grounding has its own test."""
     if "recaps" not in request.node.name:
         from src.memory import extract as _ex
-        monkeypatch.setattr(_ex, "_grounded", lambda *a, **k: True)
+        monkeypatch.setattr(_ex, "_grounded", lambda ep, *a, **k: ep)
 
 def _patch(monkeypatch, extraction=EXTRACTION, reconcile=None):
     async def fake_extract(prompt, system="", task="default"):
@@ -154,3 +154,17 @@ async def test_worker_slots_extract_concurrently(engine, mem0_store, monkeypatch
     assert time.monotonic() - t < 1.5  # four 0.5 s extractions overlapped, not 2 s in a row
     async with Session() as s:
         assert (await s.execute(select(IngestJob.status))).scalars().all() == ["done"] * 4
+
+
+async def test_reapplying_to_the_same_company_within_60_days_is_one_application(session):
+    from datetime import datetime, timedelta, timezone
+    from src.memory.ingest import _is_duplicate_episode
+    from src.memory.models import Episode
+    now = datetime(2026, 10, 6, tzinfo=timezone.utc)
+    session.add(Episode(occurred_at=now - timedelta(days=15), kind="applied", summary="Applied to Acme",
+                        entities=["company:acme", "topic:job-search"], embedding=[0.1] * 768))
+    await session.commit()
+    vec = [0.2] * 768
+    assert await _is_duplicate_episode(session, "applied", now, vec, ["company:acme", "topic:job-search"])
+    assert not await _is_duplicate_episode(session, "applied", now, vec, ["company:globex", "topic:job-search"])
+    assert not await _is_duplicate_episode(session, "applied", now + timedelta(days=90), vec, ["company:acme"])

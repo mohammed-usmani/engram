@@ -13,7 +13,7 @@ def _placeholder_text_is_grounded(request, monkeypatch):
     """These tests feed placeholder text ("...") to check field clean-up; grounding has its own test."""
     if "recaps" not in request.node.name:
         from src.memory import extract as _ex
-        monkeypatch.setattr(_ex, "_grounded", lambda *a, **k: True)
+        monkeypatch.setattr(_ex, "_grounded", lambda ep, *a, **k: ep)
 
 def test_redact():
     text = ("key sk-ant-api03-abcdefghijklmnopqrstuv and ghp_abcdefghijklmnopqrstuvwxyz0123 "
@@ -146,7 +146,12 @@ def test_recaps_cannot_invent_applications_or_dates():
                 {"kind": "applied", "summary": "Applied to Globex", "when": "2026-10-04", "entities": ["Globex"]},
                 {"kind": "interview", "summary": "Initech screening", "when": "2026-10-05", "entities": ["Initech"]},
                 {"kind": "interview", "summary": "Umbrella interview", "when": "2026-10-02", "entities": ["Umbrella"]}]}
-    kept = [e["summary"] for e in parse_extraction(data, now, text).episodes]
-    assert kept == ["Applied to Acme", "Initech screening"]
+    eps = {e["summary"]: e for e in parse_extraction(data, now, text).episodes}
+    assert list(eps) == ["Applied to Acme", "Initech screening", "Umbrella interview"]
+    assert eps["Initech screening"]["occurred_at"].day == 5          # date the text gives: kept
+    assert eps["Umbrella interview"]["occurred_at"] == now           # invented date: replaced, event kept
     # without the source text (old callers) nothing is filtered
     assert len(parse_extraction(data, now).episodes) == 4
+    # under an "application history" heading every listed company was applied to
+    eps = {e["summary"]: e for e in parse_extraction(data, now, "Consolidated job-application history:\n\n" + text).episodes}
+    assert "Applied to Globex" in eps and eps["Applied to Globex"]["occurred_at"] == now

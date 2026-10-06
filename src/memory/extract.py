@@ -165,6 +165,15 @@ async def extract(text: str, occurred_at: datetime, known: list[str] | None = No
 _APPLIED = re.compile(r"\b(appl(?:ied|ying)|applications? (?:was |were |has been |have been )?(?:submitted|sent)|"
                       r"(?:submitted|sent|filed) (?:my |the |an |his |her |their |a )?(?:applications?|resume|cv)|"
                       r"put in (?:an |my )?application)\b", re.I)
+# a list headed like this is a list of applications: each item counts even if it doesn't repeat "applied"
+_APPLICATION_LIST = re.compile(r"\b(job[- ])?applications? (history|log|list|tracker)|applications? (so far|sent|submitted)|"
+                               r"(companies|roles|jobs) (i|I've|I have|he has|user has) applied", re.I)
+
+
+def _headline(text: str) -> str:
+    return next((line for line in text.splitlines() if line.strip()), "")
+
+
 _RELATIVE = re.compile(r"\b(today|yesterday|tonight|this (?:morning|afternoon|evening|week)|last (?:week|night|month)|"
                        r"(?:mon|tues|wednes|thurs|fri|satur|sun)day|ago)\b", re.I)
 
@@ -184,14 +193,17 @@ def _date_mentioned(d: datetime, segment: str) -> bool:
     return any(f.lower() in low for f in forms) or bool(_RELATIVE.search(segment))
 
 
-def _grounded(ep: dict, text: str, occurred_at: datetime) -> bool:
+def _grounded(ep: dict, text: str, occurred_at: datetime) -> dict | None:
     """Models invent events and dates when handed a recap (seen: every company in a history summary became
-    "Applied to X", each with a made-up date). Keep an episode only if the text backs it up."""
+    "Applied to X", each with a made-up date). An application the text doesn't support is dropped; a date the
+    text never mentions is replaced by the message's own date rather than trusted."""
     seg = _segment(text, ep["entities"])
-    if ep["kind"] == "applied" and not _APPLIED.search(seg):
-        return False
+    if ep["kind"] == "applied" and not (_APPLIED.search(seg) or _APPLICATION_LIST.search(_headline(text))):
+        return None
     same_day = ep["occurred_at"].astimezone(USER_TZ).date() == occurred_at.astimezone(USER_TZ).date()
-    return same_day or _date_mentioned(ep["occurred_at"], seg)
+    if not same_day and not _date_mentioned(ep["occurred_at"], seg):
+        return {**ep, "occurred_at": occurred_at}
+    return ep
 
 
 def parse_extraction(data, occurred_at: datetime, text: str | None = None) -> Extraction:
@@ -225,7 +237,7 @@ def parse_extraction(data, occurred_at: datetime, text: str | None = None) -> Ex
             split.append(e)
     ex.episodes = split
     if text:
-        ex.episodes = [e for e in ex.episodes if _grounded(e, text, occurred_at)]
+        ex.episodes = [g for e in ex.episodes if (g := _grounded(e, text, occurred_at))]
     # career events always group under one topic, whatever the model remembered to tag
     for e in ex.episodes:
         if e["kind"] in CAREER_KINDS and CAREER_TOPIC not in e["entities"]:

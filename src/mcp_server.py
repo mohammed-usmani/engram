@@ -37,7 +37,9 @@ mcp = FastMCP(
         "the hits; project docs hold diagrams, parameters and decisions), change with edit_document (small edits) or "
         "save_document (create or replace), remove with delete_document. Every write needs "
         "`agent` (who you are: claude-code, claude-web, chatgpt, gemini, codex...) and remember() "
-        "also needs `occurred_at`, the real date and time the event happened."
+        "also needs `occurred_at`, the real date and time the event happened. Send remember() only what is NEW "
+        "since you last called it; never re-send a summary of earlier history (it would be stored again as "
+        "new events). One event per call is best."
     ),
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     # Stateless: each request stands alone. ChatGPT's connector sometimes drops the
@@ -557,7 +559,10 @@ async def remember(text: str, agent: str, occurred_at: str, session_id: str | No
     - `agent`: who you are, e.g. claude-code, claude-web, chatgpt, gemini, codex, antigravity, cursor.
     - `occurred_at`: when it HAPPENED (not when you're saving it), ISO 8601 with time and offset,
       e.g. '2026-09-29T18:00:00+05:30'. Use the current time only for things happening right now.
-    One event per call; name companies and people exactly. Extraction runs in the background."""
+    One event per call; name companies and people exactly. Extraction runs in the background.
+    Send only what is NEW. Never re-send a recap of earlier history ("applications so far", "status
+    summary"): everything in it would be stored again as if it happened at `occurred_at`. To check what
+    Engram already knows, call recall() or timeline() instead."""
     from datetime import datetime
     async def inner(session):
         who, err = _agent(agent)

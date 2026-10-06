@@ -9,7 +9,7 @@ from src.services.providers.anthropic_provider import AnthropicProvider
 
 def test_list_provider_names():
     names = list_provider_names()
-    assert set(names) == {"ollama", "groq", "cerebras", "mistral", "together", "openai", "gemini", "claude"}
+    assert set(names) == {"ollama", "dashscope", "groq", "cerebras", "mistral", "together", "openai", "gemini", "claude"}
 
 
 def test_get_ollama_provider():

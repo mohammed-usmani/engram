@@ -51,6 +51,11 @@ Return JSON with these keys (use [] when nothing applies):
   Outcomes count (shipped a release, fixed a production bug, applied, decided); the coding session itself,
   tool/agent operations, builds, emulator runs and "we discussed X" do NOT.
   "applied to Zomato and Swiggy" is TWO "applied" episodes, one for each company.
+  A RECAP of earlier history ("history so far", "consolidated", "previously", a status summary) is not new:
+  make an episode for a past event only if the text gives its own date, and use THAT date, never the reference
+  time. Undated past events in a recap are skipped (they are already in memory).
+  "applied" only when the text says the application was submitted. Researching a company, tailoring a resume
+  for it, rating the fit or calling it a target is NOT an application.
   [{{"kind": "applied|interview|offer|rejection|decision|meeting|milestone|incident|task_done|
     purchase|travel|learning|conversation|other", "summary": str (one sentence, past tense),
     "when": ISO date or datetime (resolve "yesterday", "last Friday" against now),
@@ -154,11 +159,44 @@ def extract_prompt(text: str, occurred_at: datetime, known: list[str] | None = N
 
 async def extract(text: str, occurred_at: datetime, known: list[str] | None = None) -> Extraction:
     data = await complete_json(extract_prompt(text, occurred_at, known), system=SYSTEM, task="extract")
-    return parse_extraction(data, occurred_at)
+    return parse_extraction(data, occurred_at, text)
 
 
-def parse_extraction(data, occurred_at: datetime) -> Extraction:
-    """Model JSON -> a cleaned Extraction (shared by live calls and batch results)."""
+_APPLIED = re.compile(r"\b(appl(?:ied|ying)|applications? (?:was |were |has been |have been )?(?:submitted|sent)|"
+                      r"(?:submitted|sent|filed) (?:my |the |an |his |her |their |a )?(?:applications?|resume|cv)|"
+                      r"put in (?:an |my )?application)\b", re.I)
+_RELATIVE = re.compile(r"\b(today|yesterday|tonight|this (?:morning|afternoon|evening|week)|last (?:week|night|month)|"
+                       r"(?:mon|tues|wednes|thurs|fri|satur|sun)day|ago)\b", re.I)
+
+
+def _segment(text: str, names: list[str]) -> str:
+    """The paragraphs of `text` that mention any of `names` (the whole text if none do)."""
+    paras = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+    hits = [p for p in paras if any(n and n.lower() in p.lower() for n in names)]
+    return "\n\n".join(hits) or text
+
+
+def _date_mentioned(d: datetime, segment: str) -> bool:
+    day = d.astimezone(USER_TZ).date()
+    forms = {day.isoformat(), f"{day.day} {day:%b}", f"{day:%b} {day.day}", f"{day.day} {day:%B}", f"{day:%B} {day.day}",
+             f"{day:%d/%m/%Y}", f"{day.day}/{day.month}"}
+    low = segment.lower()
+    return any(f.lower() in low for f in forms) or bool(_RELATIVE.search(segment))
+
+
+def _grounded(ep: dict, text: str, occurred_at: datetime) -> bool:
+    """Models invent events and dates when handed a recap (seen: every company in a history summary became
+    "Applied to X", each with a made-up date). Keep an episode only if the text backs it up."""
+    seg = _segment(text, ep["entities"])
+    if ep["kind"] == "applied" and not _APPLIED.search(seg):
+        return False
+    same_day = ep["occurred_at"].astimezone(USER_TZ).date() == occurred_at.astimezone(USER_TZ).date()
+    return same_day or _date_mentioned(ep["occurred_at"], seg)
+
+
+def parse_extraction(data, occurred_at: datetime, text: str | None = None) -> Extraction:
+    """Model JSON -> a cleaned Extraction (shared by live calls and batch results). With `text`, episodes the
+    text doesn't support (invented applications, invented dates) are dropped."""
     ex = Extraction()
     ex.entities = [{"name": e["name"].strip(), "kind": str(e.get("kind") or "topic").lower()}
                    for e in _list(data, "entities") if isinstance(e.get("name"), str) and e["name"].strip()]
@@ -186,6 +224,8 @@ def parse_extraction(data, occurred_at: datetime) -> Extraction:
         else:
             split.append(e)
     ex.episodes = split
+    if text:
+        ex.episodes = [e for e in ex.episodes if _grounded(e, text, occurred_at)]
     # career events always group under one topic, whatever the model remembered to tag
     for e in ex.episodes:
         if e["kind"] in CAREER_KINDS and CAREER_TOPIC not in e["entities"]:

@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -18,6 +19,14 @@ EXTRACTION = {
     "session_notes": [{"key": "follow_up", "value": "Email Acme recruiter Friday"}],
 }
 
+
+
+@pytest.fixture(autouse=True)
+def _placeholder_text_is_grounded(request, monkeypatch):
+    """These tests feed placeholder text ("...") to check field clean-up; grounding has its own test."""
+    if "recaps" not in request.node.name:
+        from src.memory import extract as _ex
+        monkeypatch.setattr(_ex, "_grounded", lambda *a, **k: True)
 
 def _patch(monkeypatch, extraction=EXTRACTION, reconcile=None):
     async def fake_extract(prompt, system="", task="default"):

@@ -141,7 +141,7 @@ async def collect(session: AsyncSession) -> int:
                     await _requeue(session, job, str(err.get("message") if isinstance(err, dict) else err))
                     continue
                 try:
-                    ex = parse_extraction(parse_json(content), job.occurred_at)
+                    ex = parse_extraction(parse_json(content), job.occurred_at, redact(job.text))
                 except Exception as e:
                     await _requeue(session, job, f"invalid JSON: {e}")
                     continue

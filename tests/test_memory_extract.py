@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -5,6 +6,14 @@ from sqlalchemy import select
 from src.memory import entities, extract
 from src.memory.models import Entity
 
+
+
+@pytest.fixture(autouse=True)
+def _placeholder_text_is_grounded(request, monkeypatch):
+    """These tests feed placeholder text ("...") to check field clean-up; grounding has its own test."""
+    if "recaps" not in request.node.name:
+        from src.memory import extract as _ex
+        monkeypatch.setattr(_ex, "_grounded", lambda *a, **k: True)
 
 def test_redact():
     text = ("key sk-ant-api03-abcdefghijklmnopqrstuv and ghp_abcdefghijklmnopqrstuvwxyz0123 "
@@ -120,3 +129,24 @@ async def test_one_off_todos_are_not_procedures(monkeypatch):
     monkeypatch.setattr(extract, "complete_json", fake)
     ex = await extract.extract("...", datetime(2026, 10, 1, tzinfo=timezone.utc))
     assert [p["name"] for p in ex.procedures] == ["deploy cityfix"]
+
+
+def test_recaps_cannot_invent_applications_or_dates():
+    """Seen live: a history recap turned every company into "Applied to X", each with a made-up date."""
+    from datetime import datetime, timezone
+    from src.memory.extract import parse_extraction
+    now = datetime(2026, 10, 6, 12, tzinfo=timezone.utc)
+    text = ("Acme — Backend Engineer. Applied Oct 6 2026.\n\n"
+            "Globex — AI Engineer. Strong target, tailored resume created.\n\n"
+            "Initech — screening around Oct 5 2026 went well.\n\n"
+            "Umbrella — interview, details unknown.")
+    data = {"entities": [{"name": n, "kind": "company"} for n in ("Acme", "Globex", "Initech", "Umbrella")],
+            "episodes": [
+                {"kind": "applied", "summary": "Applied to Acme", "when": "2026-10-06", "entities": ["Acme"]},
+                {"kind": "applied", "summary": "Applied to Globex", "when": "2026-10-04", "entities": ["Globex"]},
+                {"kind": "interview", "summary": "Initech screening", "when": "2026-10-05", "entities": ["Initech"]},
+                {"kind": "interview", "summary": "Umbrella interview", "when": "2026-10-02", "entities": ["Umbrella"]}]}
+    kept = [e["summary"] for e in parse_extraction(data, now, text).episodes]
+    assert kept == ["Applied to Acme", "Initech screening"]
+    # without the source text (old callers) nothing is filtered
+    assert len(parse_extraction(data, now).episodes) == 4

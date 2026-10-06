@@ -120,3 +120,14 @@ async def test_mcp_remember_requires_who_and_when(mcp_db):
     from src.mcp_server import remember
     assert "error" in await _call(remember)("Applied to Acme", "", "2026-10-03T10:00:00+05:30")
     assert "error" in await _call(remember)("Applied to Acme", "chatgpt", "yesterday")
+
+
+async def test_get_resume_lists_other_versions(mcp_db):
+    import src.mcp_server as srv
+    out = await _call(srv.save_document)(slug="resume/general-latex", agent="claude-code", title="Resume (LaTeX source)",
+                                         content="\\\\documentclass{article}\n", type="resume", privacy="private")
+    assert out["type"] == "resume"
+    r = await _call(srv.get_resume)()
+    assert r["slug"] == "resume/master"
+    assert {"slug": "resume/general-latex", "title": "Resume (LaTeX source)", "privacy": "private",
+            "how_to_get": "get_document('resume/general-latex')"} in r["other_versions"]

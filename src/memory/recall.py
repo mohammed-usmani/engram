@@ -6,9 +6,11 @@ pack pinned sections first, then greedy by score under the budget.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
+import os
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -29,6 +31,7 @@ from src import settings_store
 
 log = logging.getLogger(__name__)
 
+PLAN_TIMEOUT_S = float(os.environ.get("RECALL_PLAN_TIMEOUT", "8"))
 ENTITY_SIM = 0.6          # situation ↔ entity embedding; measured: hits ≥0.64, misses ≤0.51
 RRF_K = 60
 MAX_PER_EPISODE_KIND = 3  # counts live in the aggregates; list only a few examples per kind
@@ -105,14 +108,20 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
         if key not in _plan_cache:
             known = dict((await session.execute(select(Entity.name, Entity.slug).order_by(Entity.updated_at.desc()).limit(80))).all())
             try:
-                p = await complete_json(_PLAN_PROMPT.format(situation=situation, known=", ".join(known) or "none"), task="plan")
+                # an assistant is waiting on this recall: the planner gets a few seconds, then recall goes on
+                # without it (seen: a slow provider held recall ~4 min and ChatGPT gave up)
+                p = await asyncio.wait_for(complete_json(
+                    _PLAN_PROMPT.format(situation=situation, known=", ".join(known) or "none"), task="plan"),
+                    PLAN_TIMEOUT_S)
                 _plan_cache[key] = {"entities": [known[n] for n in p.get("entities", []) if n in known],
                                     "weights": _sane_weights(p.get("weights"))}
             except Exception as e:  # planner is an optimisation; the fast plan still works
-                log.info("planner skipped: %s", e)
-                _plan_cache[key] = {"entities": [], "weights": {}}
-        slugs |= set(_plan_cache[key]["entities"])
-        weights.update(_plan_cache[key]["weights"])
+                log.info("planner skipped: %s", type(e).__name__ if isinstance(e, asyncio.TimeoutError) else e)
+                if not isinstance(e, asyncio.TimeoutError):  # a timeout may be transient: don't cache it
+                    _plan_cache[key] = {"entities": [], "weights": {}}
+        plan_ = _plan_cache.get(key, {"entities": [], "weights": {}})
+        slugs |= set(plan_["entities"])
+        weights.update(plan_["weights"])
 
     # 1-hop graph expansion: entities that co-occur with matched ones in ≥2 episodes
     if slugs:

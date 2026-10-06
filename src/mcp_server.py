@@ -364,21 +364,28 @@ async def search_context(query: str, limit: int = 10) -> list[dict] | dict:
 
 @mcp.tool()
 async def get_resume() -> dict:
-    """Return the master resume document (summary-level).
+    """Return the master resume, plus `other_versions`: every other resume document (e.g. the LaTeX
+    source) with its slug, so you can fetch the exact one you need with get_document(slug).
+
+    If the user wants LaTeX, a PDF-ready file or "my usual template", look in other_versions for the
+    LaTeX source and get_document it; never rebuild a template from memory.
 
     NOTE: This is a high-level resume only. For detailed, deep information about
     any specific project, skill, or work experience, use list_documents + get_document
     instead. Each project has a full write-up with architecture, tech stack, features,
     challenges, and metrics that goes far beyond the resume's one-line bullets."""
     async def inner(session: AsyncSession):
-        row = (
-            await session.execute(
-                select(ContextDocument).where(ContextDocument.type == DocType.RESUME.value, readable(ContextDocument.privacy)).limit(1)
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            return {"error": "resume not found"}
-        return _doc_full(row)
+        rows = (await session.execute(
+            select(ContextDocument).where(ContextDocument.type == DocType.RESUME.value, readable(ContextDocument.privacy))
+            .order_by((ContextDocument.slug == "resume/master_resume").desc(), ContextDocument.updated_at.desc())
+        )).scalars().all()
+        if not rows:
+            raise ToolInputError("There is no resume document yet.",
+                                 "Create one with save_document(slug='resume/master_resume', type='resume', ...).")
+        main = next((r for r in rows if "latex" not in r.slug.lower()), rows[0])
+        return {**_doc_full(main), "other_versions": [
+            {"slug": r.slug, "title": r.title, "privacy": r.privacy or "normal",
+             "how_to_get": f"get_document('{r.slug}')"} for r in rows if r is not main]}
     return await _with_session(inner)
 
 

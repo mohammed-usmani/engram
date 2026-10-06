@@ -128,3 +128,15 @@ async def test_combine_refuses_a_giant_fact(client, mem0_store):
     assert r.status_code == 422 and "one short sentence" in r.json()["detail"]
     r = await client.post("/api/facts/combine", headers=LOCAL, json={"ids": [a, b], "text": "Builds AI agents at Acme"})
     assert r.status_code == 200, r.text
+
+
+async def test_slow_planner_cannot_stall_recall(session, monkeypatch):
+    import asyncio, time
+    from src.memory import recall as rc
+    async def stuck(*a, **k):
+        await asyncio.sleep(30)
+    monkeypatch.setattr(rc, "complete_json", stuck)
+    monkeypatch.setattr(rc, "PLAN_TIMEOUT_S", 0.2)
+    t = time.monotonic()
+    out = await rc.recall(session, "anything at all about me", fast=False)
+    assert time.monotonic() - t < 10 and "brief" in out

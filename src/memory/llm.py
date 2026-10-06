@@ -19,6 +19,7 @@ _KEY_ENV = {
     "groq": ("GROQ_API_KEY",),
     "mistral": ("MISTRAL_API_KEY",),
     "together": ("TOGETHER_API_KEY",),
+    "dashscope": ("DASHSCOPE_API_KEY",),
     "cerebras": ("CEREBRAS_API_KEY",),
     "claude": ("ANTHROPIC_API_KEY",),
     "openai": ("OPENAI_API_KEY",),

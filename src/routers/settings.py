@@ -18,7 +18,7 @@ from src.services.providers import list_provider_names, PROVIDER_MODELS
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-LABELS = {"ollama": "Ollama", "groq": "Groq", "cerebras": "Cerebras", "mistral": "Mistral", "together": "Together",
+LABELS = {"ollama": "Ollama", "dashscope": "DashScope (Alibaba)", "groq": "Groq", "cerebras": "Cerebras", "mistral": "Mistral", "together": "Together",
           "openai": "OpenAI", "gemini": "Gemini", "claude": "Claude"}
 
 

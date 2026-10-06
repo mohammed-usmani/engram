@@ -11,7 +11,12 @@ OPENAI_COMPAT_PROVIDERS = {
     "openai": "https://api.openai.com/v1",
     "mistral": "https://api.mistral.ai/v1",
     "together": "https://api.together.xyz/v1",
+    "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",  # Alibaba Model Studio (international)
 }
+
+# Hybrid-reasoning models on DashScope think by default: slower, more tokens, and the reply can arrive
+# as reasoning only. Engram wants direct JSON answers.
+_EXTRA_BODY = {"dashscope": {"enable_thinking": False}}
 
 # Together's json_object mode wants a schema; there we rely on the prompt + tolerant parsing.
 _NO_JSON_MODE = {"together"}
@@ -20,7 +25,8 @@ _NO_JSON_MODE = {"together"}
 class OpenAICompatProvider(LLMProvider):
     def __init__(self, name: str, base_url: str, api_key: str, model: str):
         self.name = name
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        # fail fast: the caller has its own timeout and fallback chain (the SDK default is 10 min, 2 retries)
+        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=170, max_retries=1)
         self.model = model
 
     def _build_messages(self, message: str, system: str, history: list[dict[str, str]] | None) -> list[dict[str, str]]:
@@ -41,6 +47,8 @@ class OpenAICompatProvider(LLMProvider):
     ) -> str:
         messages = self._build_messages(message, system, history)
         extra = {"response_format": {"type": "json_object"}} if json and self.name not in _NO_JSON_MODE else {}
+        if self.name in _EXTRA_BODY:
+            extra["extra_body"] = _EXTRA_BODY[self.name]
         response = await self._client.chat.completions.create(
             model=self.model, messages=messages, **extra,
         )
@@ -55,6 +63,7 @@ class OpenAICompatProvider(LLMProvider):
         messages = self._build_messages(message, system, history)
         stream = await self._client.chat.completions.create(
             model=self.model, messages=messages, stream=True,
+            **({"extra_body": _EXTRA_BODY[self.name]} if self.name in _EXTRA_BODY else {}),
         )
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None

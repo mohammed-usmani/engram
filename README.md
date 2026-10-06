@@ -130,7 +130,7 @@ CONNECTION_STRING=postgresql+asyncpg://postgres:postgres@localhost:5432/engram
 DATA_DIR=data/examples                  # text files imported once on first start (optional)
 USER_NAME=Alex                          # how prompts refer to you
 USER_TZ=Asia/Kolkata                    # "yesterday" means *your* yesterday
-TOGETHER_API_KEY=...                    # or GEMINI_/GROQ_/MISTRAL_/OPENAI_/ANTHROPIC_API_KEY
+TOGETHER_API_KEY=...                    # or DASHSCOPE_/GEMINI_/GROQ_/MISTRAL_/OPENAI_/ANTHROPIC_API_KEY
 MEMORY_LLM_CHAIN=together,ollama        # tried in order; local Ollama as the fallback
 MEMORY_MODEL_TOGETHER=deepseek-ai/DeepSeek-V4-Flash-0731
 ENV

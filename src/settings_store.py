@@ -32,7 +32,9 @@ DEFAULTS: dict[str, Any] = {
     "flags": {"recovery_key_saved": False},
     "cleanup_dismissed": [],                                 # suggestion keys the user said "not the same" to
     "kind_map": {},                                          # extractor topic kind -> one of entities.CANON_KINDS
-    "rejected_lessons": [],                                  # lesson texts marked wrong; consolidate skips look-alikes
+    "rejected_lessons": [],
+    "health_verdicts": {},
+    "eval_nightly": None,                                    # date the nightly evaluation last ran                                   # "factA|factB" -> LLM verdict on whether they contradict                                  # lesson texts marked wrong; consolidate skips look-alikes
 }
 _cache: dict[str, Any] = {}
 

@@ -257,14 +257,16 @@ brief, which is built live from your current facts.
 ## Choosing the extraction model
 
 Every memory write costs one LLM call (plus a small one when a new fact may contradict an old one).
-Any OpenAI-compatible provider works: Together, Groq, Mistral, Gemini, Cerebras, OpenAI, Anthropic,
-or local Ollama. Pick one with the included eval — 14 labelled cases (multi-company applications,
-relative dates, interview + offer in one sentence, procedures, session notes, noisy coding
-transcripts, small talk that must be ignored), repeated to catch flakiness:
+Any OpenAI-compatible provider works: DashScope (Alibaba), Together, Groq, Mistral, Gemini, Cerebras,
+OpenAI, Anthropic, or local Ollama, and you switch per job in **Settings → Which model does what**. Pick
+one with the extraction test set (see Evaluation below): labelled cases for multi-company applications,
+relative dates, interview + offer in one sentence, procedures, session notes, noisy coding transcripts and
+small talk that must be ignored, plus regressions from real failures (history recaps, plans that aren't
+applications, quoted examples that didn't happen):
 
 ```bash
-uv run python scripts/eval_extraction.py --chain together --together-model <model> --repeats 5
-uv run python scripts/eval_extraction.py --chain ollama --ollama-model qwen2.5-coder:7b --concurrency 1
+uv run python scripts/eval_extraction.py dashscope deepseek-v4-flash-0731
+uv run python scripts/eval_extraction.py ollama qwen2.5-coder:7b --concurrency 1
 ```
 
 Results at the time of writing:
@@ -285,6 +287,21 @@ waiting job goes to Together's Batch API as one batch; results come back in minu
 exactly like live extractions. Batches already sent are still collected after you switch back. Batches cost
 about half and use their own rate limits, but Together only batches serverless models (DeepSeek-V4-Flash is
 refused), so they use `MEMORY_BATCH_MODEL`, default `openai/gpt-oss-120b` (126/126 on the eval above).
+
+## Evaluation
+
+When something looks wrong (an assistant got an empty brief, a fact is stale, an event was invented),
+the **Evaluation** and **Traces** pages show where.
+
+| Layer | What it checks | Cost |
+|---|---|---|
+| **Data health** | Facts that contradict each other (look-alike pairs with different numbers or tense, confirmed by one batched LLM call and cached), duplicate events, one thing under two topic names, one-off topics, unreadable or wrong-weekday dates, oversized facts, failed queue jobs, recall and extraction quality from the last 7 days of traces, backup age | free + a fraction of a cent |
+| **Golden questions** | Questions you'd really ask, each with text the brief must contain and must not contain (e.g. "8.27", not "8.0"). Save one from the Recall inspector or a trace | free (fast recall) |
+| **Extraction test set** | The labelled cases above, against any provider/model, without changing what live extraction uses | ~20 LLM calls |
+| **Traces** | Every recall (who asked, plan, planner status, items, budget by section, timings, the brief) and every extraction (provider, fallbacks, what was kept, what the grounding check dropped and why), kept 30 days, with 👍/👎 feedback | free |
+
+Data health and golden questions run every night at 03:00 (after the backup); extraction runs when you ask.
+From the command line: `uv run python -m src.eval.runner health|recall|extract [provider model]`.
 
 ## Your data stays yours
 

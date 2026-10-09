@@ -535,17 +535,21 @@ def _check_item_id(item_id: str) -> None:
         raise ToolInputError(f"'{item_id}' is not a memory item id.", ITEM_ID_RULE)
 
 @mcp.tool()
-async def recall(situation: str, session_id: str | None = None, budget_tokens: int = 1500, fast: bool = False) -> dict:
+async def recall(situation: str, session_id: str | None = None, budget_tokens: int = 1500, fast: bool = False,
+                 agent: str | None = None) -> dict:
     """Get what you should know about the user for the current situation. CALL THIS FIRST whenever
     the user starts a task, mentions something personal (jobs, health, projects, people, plans), or
     you need their preferences. Pass the user's words as `situation`. Returns a ranked brief that
     blends their profile, the current task's notes, counts/timelines of past events (e.g. how many
     job applications, since when, outcomes), lessons learned, preferences, how they do things, and
-    relevant documents. Item ids like [e:12] / [f:...] / [r:3] can be passed to expand()."""
+    relevant documents. Item ids like [e:12] / [f:...] / [r:3] can be passed to expand().
+    `agent` (optional): who you are, e.g. chatgpt, claude-code; it helps the user trace what you were given."""
     async def inner(session):
         if not (situation or "").strip():
             raise ToolInputError("`situation` is empty.", "Pass what the user said or is doing, in their words.")
-        return await _recall(session, situation, budget_tokens, session_id, fast)
+        who = (agent or "").strip().lower()[:24]
+        return await _recall(session, situation, budget_tokens, session_id, fast,
+                             source=f"mcp:{who}" if who else "mcp")
     return await _with_session(inner)
 
 

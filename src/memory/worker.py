@@ -64,8 +64,39 @@ async def _batches(stop: asyncio.Event) -> None:
             pass
 
 
+NIGHTLY_HOUR = int(os.environ.get("EVAL_NIGHTLY_HOUR", "3"))  # local time, after the 02:30 backup
+NIGHTLY_START_DELAY_S = 120
+
+
+async def _nightly(stop: asyncio.Event) -> None:
+    """Health checks and golden questions once a day; the date of the last run is kept in settings."""
+    from datetime import datetime
+    from src import settings_store
+    from src.eval import runner
+    from src.memory import USER_TZ
+    try:  # short-lived workers (tests, a quick restart) never reach the nightly run
+        await asyncio.wait_for(stop.wait(), NIGHTLY_START_DELAY_S)
+        return
+    except asyncio.TimeoutError:
+        pass
+    while not stop.is_set():
+        now = datetime.now(USER_TZ)
+        today = now.date().isoformat()
+        try:
+            if now.hour >= NIGHTLY_HOUR and settings_store.get("eval_nightly") != today:
+                async with AsyncSessionLocal() as session:
+                    await settings_store.put(session, "eval_nightly", today)
+                    await runner.nightly(session)
+        except Exception:
+            log.exception("nightly evaluation failed")
+        try:
+            await asyncio.wait_for(stop.wait(), 600)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def run_worker(stop: asyncio.Event, idle_sleep: float = 2.0) -> None:
-    await asyncio.gather(_batches(stop),
+    await asyncio.gather(_batches(stop), _nightly(stop),
                          *(_slot(stop, idle_sleep, consolidates=i == 0) for i in range(max(1, CONCURRENCY))))
 
 

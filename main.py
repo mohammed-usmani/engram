@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
             await session.commit()
             log.info("seed summary: %s", summary)
         await settings_store.load(session)  # Settings-page choices (keys, models per job) before any work runs
+        from src.eval.runner import close_interrupted
+        await close_interrupted(session)
     stop = asyncio.Event()
     worker = asyncio.create_task(run_worker(stop)) if os.environ.get("MEMORY_WORKER", "1") != "0" else None
     async with mcp.session_manager.run():
@@ -57,6 +59,10 @@ app.include_router(memory_router)
 app.include_router(ui_pages.router)
 app.include_router(system_api.router)
 app.include_router(core_api.router)
+from src.eval import api as eval_api  # noqa: E402
+app.include_router(eval_api.router)
+from src.ui import eval_pages as ui_evals  # noqa: E402
+app.include_router(ui_evals.router)
 app.include_router(ui_cleanup.router)
 app.include_router(ui_memory.router)
 app.include_router(ui_ask.router)

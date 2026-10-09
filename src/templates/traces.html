@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Traces · Engram{% endblock %}
+{% block head %}<style>
+.fb { display: inline-flex; gap: 2px; }
+.fb button { min-height: 30px; min-width: 32px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+             cursor: pointer; font-size: 14px; filter: grayscale(1); opacity: .5; }
+.fb button:hover { opacity: .9; }
+.fb button[aria-pressed=true] { filter: none; opacity: 1; background: var(--sunk); border-color: var(--line); }
+.preview { display: block; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.preview:hover { color: var(--blue); }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Traces</h1><div class="sub">Every recall and extraction as it happened: what came in, what came out, how long it took and what looked wrong. Kept 30 days.</div></div>
+  </header>
+
+  <section class="card stack" aria-labelledby="h-week">
+    <h2 id="h-week">Last 7 days</h2>
+    {% if stats.by_source %}
+    <div class="grid-auto">
+      {% for s in stats.by_source %}
+      <a class="stat" href="/traces?{{ {'kind': s.kind, 'source': s.source or ''}|urlencode }}">
+        <span class="label">{{ s.kind }} · {{ s.source }}</span><span class="value">{{ s.n|num }}</span>
+        <span class="tiny muted">median {{ s.p50|int|num }} ms · slowest 5% {{ s.p95|int|num }} ms</span></a>
+      {% endfor %}
+    </div>
+    {% if stats.flags %}
+    <div class="inline"><span class="label">Flags</span>
+      {% for x in stats.flags %}<a class="chip {{ 'on' if f.flag == x.flag else 'amber' }}" href="/traces?{{ dict(f, flag=x.flag, kind=x.kind)|urlencode }}">{{ x.flag|kindlabel }} · {{ x.kind }} · {{ x.n }}</a>{% endfor %}
+    </div>
+    {% endif %}
+    {% else %}<p class="small muted">No traces in the last 7 days.</p>{% endif %}
+  </section>
+
+  <form class="card inline" method="get" style="padding:14px;align-items:flex-end" aria-label="Filter traces">
+    <label class="field"><span class="label">Kind</span><select class="select" name="kind">
+      {% for v, l in [("", "Any"), ("recall", "Recall"), ("extract", "Extraction")] %}<option value="{{ v }}" {{ 'selected' if f.kind == v }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="field"><span class="label">Source</span><select class="select" name="source">
+      <option value="">Any except eval</option>
+      {% for s in sources %}<option value="{{ s }}" {{ 'selected' if f.source == s }}>{{ s }}</option>{% endfor %}</select></label>
+    <label class="field"><span class="label">Flag</span><select class="select" name="flag">
+      <option value="">Any</option>
+      {% for x in ["empty_brief", "planner_timeout", "planner_error", "no_embeddings", "mostly_pinned", "slow", "failed", "dropped_events", "fallback_used", "nothing_extracted", "duplicates_skipped"] %}
+      <option value="{{ x }}" {{ 'selected' if f.flag == x }}>{{ x|kindlabel }}</option>{% endfor %}</select></label>
+    <label class="field"><span class="label">Feedback</span><select class="select" name="feedback">
+      {% for v, l in [("", "Any"), ("1", "👍 Good"), ("-1", "👎 Bad")] %}<option value="{{ v }}" {{ 'selected' if f.feedback == v }}>{{ l }}</option>{% endfor %}</select></label>
+    <label class="search" style="flex:1 1 220px"><span class="sr">Search input text</span><input name="q" value="{{ f.q }}" placeholder="Search the input text"></label>
+    <button class="btn primary" type="submit">Filter</button>
+    {% if f.values()|select|list %}<a class="btn ghost" href="/traces">Clear</a>{% endif %}
+  </form>
+
+  <section class="card flush">
+    <div class="scroll-x"><table class="t" style="min-width:900px">
+      <thead><tr><th scope="col">When</th><th scope="col">Kind</th><th scope="col">Source</th><th scope="col">Input</th><th scope="col">Outcome</th><th scope="col">Time</th><th scope="col">Feedback</th></tr></thead>
+      <tbody>
+      {% for t in traces %}{% set g = t.glance %}
+        <tr id="row-{{ loop.index0 }}">
+          <td class="small" style="white-space:nowrap"><a href="/traces/{{ t.id }}">{{ t.created_at|ago }}</a><div class="tiny muted mono">#{{ t.id }}</div></td>
+          <td><span class="chip {{ 'blue' if t.kind == 'recall' else '' }}">{{ t.kind }}</span></td>
+          <td class="small">{{ t.source }}</td>
+          <td class="small" style="max-width:340px"><a class="preview" href="/traces/{{ t.id }}">{{ t.input[:160] or "(empty)" }}</a>
+            {% if t.flags %}<div class="inline" style="gap:4px;margin-top:4px">{% for x in t.flags %}<span class="chip {{ 'red' if x in ('failed', 'empty_brief', 'planner_error') else 'amber' }}">{{ x|kindlabel }}</span>{% endfor %}</div>{% endif %}
+            {% if t.note %}<div class="tiny muted">Note: {{ t.note }}</div>{% endif %}</td>
+          <td class="small">{% if t.kind == "recall" %}{{ g['items'] }} items · {{ g.used }} tokens{% if g.pinned %} ({{ g.pinned }} pinned){% endif %}<div class="tiny muted">planner {{ g.planner }}</div>
+            {% else %}{{ g.episodes }} events · {{ g.facts }} facts{% if g.dropped %} · {{ g.dropped }} dropped{% endif %}<div class="tiny muted">{{ g.provider or "—" }}{{ " · " ~ g.model if g.model }}</div>
+              {% if g.error %}<div class="tiny" style="color:var(--red)">{{ g.error[:120] }}</div>{% endif %}{% endif %}</td>
+          <td class="mono small">{{ t.duration_ms|num }} ms</td>
+          <td><span class="fb" data-fb="{{ t.id }}">
+            <button type="button" data-v="1" aria-pressed="{{ 'true' if t.feedback == 1 else 'false' }}" aria-label="Good">👍</button>
+            <button type="button" data-v="-1" aria-pressed="{{ 'true' if t.feedback == -1 else 'false' }}" aria-label="Bad">👎</button></span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7"><div class="empty" style="margin:8px 0">{% if f.values()|select|list %}No traces match these filters.{% else %}No traces yet. Every recall (from assistants, Ask Engram or the inspector) and every extraction is recorded here as it happens.{% endif %}</div></td></tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% if more %}<div class="inline" style="justify-content:center;padding:12px"><a class="btn sm" href="/traces?{{ dict(f, limit=limit + 50)|urlencode }}#row-{{ limit }}">Load more</a></div>{% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script>
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('.fb button'); if (!b) return;
+  const group = b.closest('.fb'), on = b.getAttribute('aria-pressed') === 'true';
+  try {
+    await Engram.api('POST', `/api/traces/${group.dataset.fb}/feedback`, { value: on ? 0 : parseInt(b.dataset.v, 10) });
+    group.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b && !on)));
+  } catch (err) { Engram.toast(err.message, 'error'); }
+});
+</script>{% endblock %}

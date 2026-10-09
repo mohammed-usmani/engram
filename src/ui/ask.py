@@ -180,7 +180,7 @@ async def ask(body: AskIn, session: AsyncSession = Depends(get_session)):
                                       .limit(10))).scalars().all()
         history = [{"role": m.role.value, "content": m.content} for m in reversed(last)]
 
-    result = await rc.recall(session, message, budget_tokens=2000, fast=True, explain=True)
+    result = await rc.recall(session, message, budget_tokens=2000, fast=True, explain=True, source="ask")
     used = [{"id": c["id"], "kind": c["kind"], "text": c["text"]}
             for c in result["explain"]["candidates"] if c["in_brief"]]
     try:
@@ -204,7 +204,8 @@ async def ask(body: AskIn, session: AsyncSession = Depends(get_session)):
     await ingest.enqueue(session, "user (Ask Engram): " + message, agent="engram-chat",
                          session_id=f"ask-{conv.id}", occurred_at=datetime.now(timezone.utc))
     return {"conversation_id": conv.id, "title": conv.title, "answer": answer, "provider": provider, "model": model,
-            "used": [{**u, "href": link_for(u["id"], u["text"])} for u in used]}
+            "used": [{**u, "href": link_for(u["id"], u["text"])} for u in used],
+            "trace_id": result.get("trace_id")}
 
 
 @router.delete("/api/ask/conversations/{conversation_id}")

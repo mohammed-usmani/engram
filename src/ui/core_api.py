@@ -160,4 +160,5 @@ class InspectIn(BaseModel):
 
 @router.post("/recall/inspect")
 async def inspect(body: InspectIn, session: AsyncSession = Depends(get_session)):
-    return await rc.recall(session, body.situation, body.budget_tokens, fast=body.fast, explain=True)
+    return await rc.recall(session, body.situation, body.budget_tokens, fast=body.fast, explain=True,
+                           source="inspector")

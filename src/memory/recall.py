@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import logging
 import math
 import os
@@ -102,8 +103,10 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
     )).all()
     slugs |= {s for s, sim in rows if float(sim) >= ENTITY_SIM}
     weights = dict(DEFAULT_WEIGHTS)
+    planner = "off"
 
     if not fast:
+        planner = "cached"
         key = hashlib.sha256(situation.encode()).hexdigest()
         if key not in _plan_cache:
             known = dict((await session.execute(select(Entity.name, Entity.slug).order_by(Entity.updated_at.desc()).limit(80))).all())
@@ -115,8 +118,10 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
                     PLAN_TIMEOUT_S)
                 _plan_cache[key] = {"entities": [known[n] for n in p.get("entities", []) if n in known],
                                     "weights": _sane_weights(p.get("weights"))}
+                planner = "ok"
             except Exception as e:  # planner is an optimisation; the fast plan still works
                 log.info("planner skipped: %s", type(e).__name__ if isinstance(e, asyncio.TimeoutError) else e)
+                planner = "timeout" if isinstance(e, asyncio.TimeoutError) else "error"
                 if not isinstance(e, asyncio.TimeoutError):  # a timeout may be transient: don't cache it
                     _plan_cache[key] = {"entities": [], "weights": {}}
         plan_ = _plan_cache.get(key, {"entities": [], "weights": {}})
@@ -135,7 +140,7 @@ async def _plan(session: AsyncSession, situation: str, vec: list[float], fast: b
     me = (settings_store.get("recall") or {}).get("self_entity")
     excluded = [me] if me and me in slugs else []
     slugs -= set(excluded)  # the user is in nearly every event: boosting or summarizing them is noise
-    return {"entities": sorted(slugs), "weights": weights, "fast": fast, "excluded": excluded}
+    return {"entities": sorted(slugs), "weights": weights, "fast": fast, "excluded": excluded, "planner": planner}
 
 
 # ---------------------------------------------------------------- channels
@@ -259,16 +264,24 @@ def _similar_text(a: str, b: str) -> bool:
 
 
 async def recall(session: AsyncSession, situation: str, budget_tokens: int = 1500,
-                 session_id: str | None = None, fast: bool = False, explain: bool = False) -> dict:
+                 session_id: str | None = None, fast: bool = False, explain: bool = False,
+                 source: str | None = None) -> dict:
     """explain=True (the Recall inspector) also returns where the budget went and every candidate's
-    score factors, and doesn't count as the items being served."""
+    score factors, and doesn't count as the items being served. Every call is recorded as a trace
+    (`source` says who asked) and the result carries its `trace_id`."""
     now = datetime.now(timezone.utc)
+    t0 = time.monotonic()
+    timings: dict[str, int] = {}
     try:
         vec = await embed(situation)
     except Exception as e:  # Ollama down: keep going on profile, notes, aggregates and full-text
         log.warning("recall without embeddings: %s", e)
         vec = None
+    timings["embed_ms"] = int((time.monotonic() - t0) * 1000)
+    t1 = time.monotonic()
     plan = await _plan(session, situation, vec, fast)
+    timings["plan_ms"] = int((time.monotonic() - t1) * 1000)
+    t1 = time.monotonic()
     slugs = plan["entities"]
 
     # pinned: profile, session state, per-entity digest + aggregates
@@ -307,6 +320,8 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
         if e and (e.digest or agg):
             pinned.append(f"## {e.name} so far\n" + "\n".join(x for x in (agg, e.digest) if x))
 
+    timings["pinned_ms"] = int((time.monotonic() - t1) * 1000)
+    t1 = time.monotonic()
     pool: dict[str, Item] = {}
     for ranked in [*await _episodes(session, situation, vec, slugs), *await _reflections(session, vec, slugs),
                    *await _facts(situation), *await _documents(session, situation)]:
@@ -326,9 +341,8 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
             # only the profile is cut to fit; a summary that doesn't fit whole is left out, not chopped mid-sentence
             block = block[: max(0, (pinned_budget - used) * 4 - 8)] if not kept_pinned else ""
             cost = estimate_tokens(block) if block else 0
-        if explain:
-            sections.append({"title": pinned_title(block or pinned[len(sections)]), "tokens": cost, "full": full,
-                             "pinned": True})
+        sections.append({"title": pinned_title(block or pinned[len(sections)]), "tokens": cost, "full": full,
+                         "pinned": True})
         if block:
             kept_pinned.append(block)
             used += cost
@@ -355,11 +369,13 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
             rows.sort(key=lambda c: c.score, reverse=True)
         if rows:
             parts.append(f"## {title}\n" + "\n".join(f"- [{c.id}] {c.text}" for c in rows))
-            if explain:
-                sections.append({"title": title, "tokens": estimate_tokens(parts[-1]), "pinned": False})
+            sections.append({"title": title, "tokens": estimate_tokens(parts[-1]), "pinned": False})
     brief = "\n\n".join(parts)
 
     out = {"brief": brief, "items": [c.id for c in chosen], "plan": plan}
+    timings["rank_ms"] = int((time.monotonic() - t1) * 1000)
+    out["trace_id"] = await _trace(session, situation, source, out, sections, timings, budget_tokens, vec is None,
+                                   int((time.monotonic() - t0) * 1000))
     if explain:
         picked = {c.id for c in chosen}
         ranked = sorted(pool.values(), key=lambda i: i.score, reverse=True)[:40]
@@ -371,6 +387,27 @@ async def recall(session: AsyncSession, situation: str, budget_tokens: int = 150
         return out
     await _touch(session, [c.id for c in chosen])
     return out
+
+
+async def _trace(session: AsyncSession, situation: str, source: str | None, out: dict, sections: list[dict],
+                 timings: dict, budget: int, no_vec: bool, total_ms: int) -> int | None:
+    """Record this recall for the Traces page. Never allowed to break recall itself."""
+    from src.eval.traces import record
+    pinned = sum(s["tokens"] for s in sections if s["pinned"])
+    used = sum(s["tokens"] for s in sections)
+    plan = out["plan"]
+    flags = [f for f, on in (
+        ("empty_brief", not out["items"]),
+        ("planner_timeout", plan.get("planner") == "timeout"),
+        ("planner_error", plan.get("planner") == "error"),
+        ("no_embeddings", no_vec),
+        ("mostly_pinned", used and pinned / used > 0.8),
+        ("slow", total_ms > 8000),
+    ) if on]
+    return await record(session, "recall", source, situation, {
+        "budget": budget, "used": used, "pinned": pinned, "plan": plan, "items": out["items"],
+        "sections": sections, "timings": timings, "brief": out["brief"],
+    }, flags, total_ms)
 
 
 def pinned_title(block: str) -> str:

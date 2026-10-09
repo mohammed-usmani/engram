@@ -26,6 +26,15 @@ _KEY_ENV = {
 }
 
 
+from contextvars import ContextVar
+
+# Evaluation runs pin one provider/model for their own task only; live extraction is unaffected.
+FORCE: ContextVar[list[tuple[str, str | None]] | None] = ContextVar("engram_force_llm", default=None)
+
+# What the last complete_json() in this task did: who answered, after which failures. Read by tracing.
+LAST_CALL: ContextVar[dict | None] = ContextVar("engram_last_llm_call", default=None)
+
+
 class LLMUnavailable(RuntimeError):
     """Every provider in the chain failed or returned unparseable output."""
 
@@ -70,6 +79,9 @@ def chain(task: str = "default") -> list[str]:
 def steps(task: str = "default") -> list[tuple[str, str | None]]:
     """(provider, model) pairs to try in order. Settings-page assignments for this task, else the
     extraction assignment, else MEMORY_LLM_CHAIN; providers without a key are skipped."""
+    forced = FORCE.get()
+    if forced:
+        return forced
     chosen = _assign.get(task) or (_assign.get("extract") if task != "chat" else None)
     if chosen:
         return [(n, m) for n, m in chosen if n == "ollama" or _key(n)]
@@ -123,9 +135,12 @@ async def complete_json(prompt: str, system: str = "", task: str = "default") ->
                 raw = await asyncio.wait_for(
                     (_make(name, model) if model else _make(name)).generate(prompt, system=system + "\nRespond with valid JSON only.", json=True),
                     timeout=float(os.environ.get("MEMORY_LLM_TIMEOUT", "180")))  # a 12k-char chunk took ~110 s
-                return parse_json(raw)
+                parsed = parse_json(raw)
+                LAST_CALL.set({"task": task, "provider": name, "model": model or default_model(name), "errors": errors})
+                return parsed
             except Exception as e:  # rate limit, timeout, bad key, invalid JSON — retry, then the next one
                 msg = (str(e) or type(e).__name__)[:200]
                 log.warning("memory llm %s attempt %d failed for task=%s: %s", name, attempt + 1, task, msg)
                 errors.append(f"{name}: {msg[:120]}")  # a timeout has no message
+    LAST_CALL.set({"task": task, "provider": None, "model": None, "errors": errors})
     raise LLMUnavailable("; ".join(errors) or "no providers configured")

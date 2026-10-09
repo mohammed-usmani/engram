@@ -231,7 +231,24 @@
       const ans = el('div', 'answer', r.answer);
       bot.append(ans, usedList(r.used));
       linkify(ans);
-      bot.append(el('div', 'tiny muted', r.provider + (r.model ? ' · ' + r.model : '')));
+      const foot = el('div', 'between');
+      foot.append(el('span', 'tiny muted', r.provider + (r.model ? ' · ' + r.model : '')));
+      if (r.trace_id) {
+        // feedback goes on the recall trace behind this answer: did memory hand the model the right things?
+        const fb = el('span', 'inline'); fb.style.gap = '2px';
+        for (const [v, label, msg] of [[1, '👍', 'Marked good'], [-1, '👎', 'Marked bad']]) {
+          const b = el('button', 'btn sm ghost', label);
+          b.type = 'button'; b.setAttribute('aria-label', v > 0 ? 'Good answer' : 'Bad answer');
+          b.dataset.api = `POST /api/traces/${r.trace_id}/feedback`;
+          b.dataset.body = JSON.stringify({ value: v });
+          b.dataset.then = 'toast:' + msg;
+          fb.append(b);
+        }
+        const a = el('a', 'tiny', 'trace'); a.href = '/traces/' + r.trace_id;
+        fb.append(a);
+        foot.append(fb);
+      }
+      bot.append(foot);
       if (isNew) {
         history.replaceState(null, '', '/chat/' + conversation);
         const none = document.getElementById('no-convs');

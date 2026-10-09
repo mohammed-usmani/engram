@@ -54,6 +54,8 @@ Return JSON with these keys (use [] when nothing applies):
   A RECAP of earlier history ("history so far", "consolidated", "previously", a status summary) is not new:
   make an episode for a past event only if the text gives its own date, and use THAT date, never the reference
   time. Undated past events in a recap are skipped (they are already in memory).
+  Text quoted as an EXAMPLE, sample, template or hypothetical ("for example, if someone says ...",
+  "e.g. 'Had my Acme onsite'") did not happen: extract nothing from it.
   "applied" only when the text says the application was submitted. Researching a company, tailoring a resume
   for it, rating the fit or calling it a target is NOT an application.
   [{{"kind": "applied|interview|offer|rejection|decision|meeting|milestone|incident|task_done|
@@ -95,6 +97,7 @@ class Extraction:
     facts: list[dict] = field(default_factory=list)
     procedures: list[dict] = field(default_factory=list)
     session_notes: list[dict] = field(default_factory=list)
+    dropped: list[dict] = field(default_factory=list)   # episodes the grounding check removed or re-dated, and why
 
 
 EPISODE_KINDS = {"applied", "interview", "offer", "rejection", "decision", "meeting", "milestone", "incident",
@@ -237,7 +240,17 @@ def parse_extraction(data, occurred_at: datetime, text: str | None = None) -> Ex
             split.append(e)
     ex.episodes = split
     if text:
-        ex.episodes = [g for e in ex.episodes if (g := _grounded(e, text, occurred_at))]
+        kept = []
+        for e in ex.episodes:
+            g = _grounded(e, text, occurred_at)
+            if g is None:
+                ex.dropped.append({"summary": e["summary"], "kind": e["kind"], "reason": "application not stated in text"})
+            else:
+                if g["occurred_at"] != e["occurred_at"]:
+                    ex.dropped.append({"summary": e["summary"], "kind": e["kind"],
+                                       "reason": f"date {e['occurred_at'].date()} not in text; used message date"})
+                kept.append(g)
+        ex.episodes = kept
     # career events always group under one topic, whatever the model remembered to tag
     for e in ex.episodes:
         if e["kind"] in CAREER_KINDS and CAREER_TOPIC not in e["entities"]:

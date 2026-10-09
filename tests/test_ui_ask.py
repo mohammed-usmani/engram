@@ -32,7 +32,7 @@ def fake(monkeypatch):
         return FakeLLM("You applied to Acme [e:1]. <script>alert(1)</script>")
     monkeypatch.setattr(llm, "make", make)
 
-    async def recall(session, situation, budget_tokens=1500, session_id=None, fast=False, explain=False):
+    async def recall(session, situation, budget_tokens=1500, session_id=None, fast=False, explain=False, source=None):
         assert fast and explain and budget_tokens == 2000
         return {"brief": "## Relevant history\n- [e:1] Applied to Acme", "items": ["e:1"],
                 "explain": {"candidates": [

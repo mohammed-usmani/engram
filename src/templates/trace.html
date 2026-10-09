@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Trace #{{ t.id }} · Engram{% endblock %}
+{% macro value(v) -%}
+{%- if v is mapping %}{% for k, x in v.items() %}<span class="muted">{{ k }}</span> {{ value(x) }}{{ " · " if not loop.last }}{% endfor %}
+{%- elif v is iterable and v is not string %}{{ v|join(", ") }}
+{%- else %}{{ v }}{% endif -%}
+{%- endmacro %}
+{% block head %}<style>
+.budget { display:flex; height:28px; border-radius:7px; overflow:hidden; background:var(--sunk); }
+.budget span { display:block; height:100%; border-right:2px solid #fff; }
+.sw { width:12px; height:12px; border-radius:3px; flex:none; display:inline-block; }
+.seg label { cursor: pointer; }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <div class="small"><a href="/traces">← Traces</a></div>
+      <h1>{{ "Recall" if t.kind == "recall" else "Extraction" }} #{{ t.id }}</h1>
+      <div class="sub">{{ t.source }} · {{ t.created_at|local_time }} · {{ t.duration_ms|num }} ms
+        {% for x in t.flags %} <span class="chip {{ 'red' if x in ('failed', 'empty_brief', 'planner_error') else 'amber' }}">{{ x|kindlabel }}</span>{% endfor %}</div>
+    </div>
+    {% if t.kind == "recall" %}<div class="inline">
+      <a class="btn" href="/recall?situation={{ t.input|urlencode }}">Run again in inspector</a>
+      <button class="btn primary" data-open="#gq-dialog">Save as golden question</button></div>
+    {% elif d.job_id %}<a class="btn" href="/queue#job-{{ d.job_id }}">Open job #{{ d.job_id }} in Queue</a>{% endif %}
+  </header>
+
+  <div class="row-wrap">
+    <section class="card stack grow-2" aria-labelledby="h-in">
+      <h2 id="h-in">{{ "Situation" if t.kind == "recall" else "Input text" }}</h2>
+      {% if t.kind == "recall" %}<p>{{ t.input or "(empty)" }}</p>
+      {% else %}<details {{ 'open' if t.input|length < 1500 }}><summary class="small" style="cursor:pointer">{{ t.input|length|num }} characters</summary><pre class="brief" style="margin-top:8px">{{ t.input }}</pre></details>{% endif %}
+    </section>
+    <form class="card stack grow-1" data-api="POST /api/traces/{{ t.id }}/feedback" data-then="toast:Feedback saved" aria-labelledby="h-fb">
+      <h2 id="h-fb">Your verdict</h2>
+      <div class="seg" role="radiogroup" aria-labelledby="h-fb">
+        {% for v, l in [(1, "👍 Good"), (-1, "👎 Bad"), (0, "No verdict")] %}
+        <label><input type="radio" name="value" value="{{ v }}" data-type="int" {{ 'checked' if (t.feedback or 0) == v }}> {{ l }}</label>{% endfor %}
+      </div>
+      <label class="field"><span class="label">Note</span><textarea class="input" name="note" rows="2" style="min-height:64px" maxlength="1000" placeholder="What was wrong or missing?">{{ t.note or "" }}</textarea></label>
+      <div><button class="btn sm" type="submit">Save</button></div>
+    </form>
+  </div>
+
+{% if t.kind == "recall" %}
+  {% set plan = d.plan or {} %}{% set tm = d.timings or {} %}
+  <section class="card stack" aria-labelledby="h-budget">
+    <div class="between"><h2 id="h-budget">Where the budget went</h2><span><b>{{ (d.used or 0)|num }}</b> <span class="muted">of {{ (d.budget or 0)|num }} tokens · {{ (d.pinned or 0)|num }} pinned</span></span></div>
+    {% set PIN = ['#8A5A1F', '#A8742F', '#C4914A', '#D9B98C', '#B98A50', '#E6CFA8', '#7A4A12'] %}
+    {% set RANK = ['#2D5B8A', '#6E8FB3', '#A9C0DA', '#24496F', '#4F79A6', '#C9D8E8'] %}
+    {% set sections = d.sections or [] %}
+    <div class="budget" role="img" aria-label="{{ d.pinned or 0 }} tokens pinned, {{ (d.used or 0) - (d.pinned or 0) }} ranked">
+      {% for s in sections %}<span style="width:{{ '%.2f'|format(100 * s.tokens / (d.budget or 1)) }}%;background:{{ (PIN if s.pinned else RANK)[loop.index0 % 6] }}" title="{{ s.title }}: {{ s.tokens }}"></span>{% endfor %}
+    </div>
+    <div class="grid-auto" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:6px 20px">
+      {% for s in sections %}<div class="inline small" style="flex-wrap:nowrap"><span class="sw" style="background:{{ (PIN if s.pinned else RANK)[loop.index0 % 6] }}"></span>
+        <span style="flex:1">{{ s.title }}{% if not s.pinned %} <span class="muted">(ranked)</span>{% endif %}{% if s.full and s.full > s.tokens %} <span class="tiny muted">cut from {{ s.full }}</span>{% endif %}</span><span class="mono">{{ s.tokens }}</span></div>
+      {% else %}<span class="small muted">No sections: the brief was empty.</span>{% endfor %}
+    </div>
+  </section>
+
+  <div class="row-wrap">
+    <section class="card stack grow-1" aria-labelledby="h-plan">
+      <h2 id="h-plan">Plan</h2>
+      <dl class="kv">
+        <dt>Planner</dt><dd><span class="chip {{ 'red' if plan.planner in ('timeout', 'error') else 'green' if plan.planner == 'ok' else '' }}">{{ plan.planner or "—" }}</span></dd>
+        <dt>Topics</dt><dd>{% for s in plan.entities or [] %}<a class="chip blue" href="/topics/{{ s|urlencode }}">{{ s }}</a> {% else %}<span class="muted">none matched</span>{% endfor %}</dd>
+        {% if plan.excluded %}<dt>Excluded</dt><dd>{% for s in plan.excluded %}<span class="chip">{{ s }} · you</span> {% endfor %}</dd>{% endif %}
+        <dt>Weights</dt><dd>{% for k, w in (plan.weights or {}).items() %}<span class="chip mono">{{ k }} ×{{ w }}</span> {% else %}<span class="muted">—</span>{% endfor %}</dd>
+      </dl>
+    </section>
+    <section class="card stack grow-1" aria-labelledby="h-tm">
+      <h2 id="h-tm">Timings</h2>
+      <dl class="kv">
+        {% for k, l in [("embed_ms", "Embed the situation"), ("plan_ms", "Plan"), ("pinned_ms", "Pinned sections"), ("rank_ms", "Rank and pack")] %}
+        <dt>{{ l }}</dt><dd class="mono">{{ tm[k]|num if tm[k] is defined else "—" }} ms</dd>{% endfor %}
+        <dt>Total</dt><dd class="mono"><b>{{ t.duration_ms|num }} ms</b></dd>
+      </dl>
+    </section>
+  </div>
+
+  <section class="card stack" aria-labelledby="h-items">
+    <h2 id="h-items">Memories in the brief <span class="muted small">{{ items|length }}</span></h2>
+    <div>
+    {% for i in items %}
+      <div class="list-row"><a class="chip mono" href="{{ i.href or '#' }}">{{ i.id if i.id|length < 14 else i.id[:12] ~ "…" }}</a><span class="small" style="flex:1;min-width:0">{{ i.text }}</span></div>
+    {% else %}<p class="small muted">No ranked memories made it into the brief.</p>{% endfor %}
+    </div>
+  </section>
+
+  <section class="card stack" aria-labelledby="h-brief">
+    <h2 id="h-brief">The brief</h2>
+    <pre class="brief">{{ d.brief or "(empty)" }}</pre>
+  </section>
+
+  <dialog id="gq-dialog" aria-labelledby="gq-title">
+    <form class="stack" data-api="POST /api/evals/questions" data-body='{{ {"trace_id": t.id}|tojson }}' data-then="toast:Saved as a golden question|redirect:/evals#questions">
+      <h2 id="gq-title">Save as golden question</h2>
+      <label class="field"><span class="label">Situation</span><input class="input" name="situation" required minlength="3" value="{{ t.input[:2000] }}"></label>
+      <label class="field"><span class="label">Must contain (one per line)</span><textarea class="input" name="must" data-type="lines" rows="3" style="min-height:80px" placeholder="e.g. 8.27"></textarea></label>
+      <label class="field"><span class="label">Must not contain (one per line)</span><textarea class="input" name="must_not" data-type="lines" rows="2" style="min-height:64px" placeholder="e.g. 8.0"></textarea></label>
+      <input type="hidden" name="budget" data-type="int" value="{{ d.budget or 1500 }}">
+      <div class="inline" style="justify-content:flex-end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+    </form>
+  </dialog>
+
+{% else %}
+  <div class="row-wrap">
+    <section class="card stack grow-1" aria-labelledby="h-who">
+      <h2 id="h-who">Who extracted it</h2>
+      <dl class="kv">
+        <dt>Provider</dt><dd>{{ d.provider or "—" }}</dd>
+        <dt>Model</dt><dd class="mono small">{{ d.model or "—" }}</dd>
+        <dt>Mode</dt><dd>{{ "Batch" if d.batched else "Live" }}</dd>
+        <dt>Attempt</dt><dd>{{ d.attempt or "—" }}</dd>
+        {% if d.job_id %}<dt>Job</dt><dd><a href="/queue#job-{{ d.job_id }}">#{{ d.job_id }}</a></dd>{% endif %}
+      </dl>
+      {% if d.error %}<div class="callout bad">{{ d.error }}</div>{% endif %}
+      {% if d.provider_errors %}<div class="stack" style="gap:6px"><span class="label">Fell back after</span>
+        {% for e in d.provider_errors %}<div class="callout small">{{ value(e) }}</div>{% endfor %}</div>{% endif %}
+    </section>
+    <section class="card stack grow-1" aria-labelledby="h-stored">
+      <h2 id="h-stored">What was stored</h2>
+      <dl class="kv">
+        {% for k, l in [("episodes", "Events"), ("facts", "Facts"), ("superseded", "Facts replaced"), ("duplicates", "Duplicates skipped")] %}
+        <dt>{{ l }}</dt><dd class="mono">{{ (d.stored or {}).get(k) if (d.stored or {}).get(k) is not none else "—" }}</dd>{% endfor %}
+      </dl>
+    </section>
+  </div>
+
+  <section class="card stack" aria-labelledby="h-eps">
+    <h2 id="h-eps">Events extracted <span class="muted small">{{ (d.episodes or [])|length }}</span></h2>
+    <div>{% for e in d.episodes or [] %}
+      <div class="list-row"><span class="kind k-{{ e.kind }}">{{ e.kind|kindlabel }}</span><span class="mono small muted">{{ e.date }}</span><span style="flex:1">{{ e.summary }}</span></div>
+    {% else %}<p class="small muted">None.</p>{% endfor %}</div>
+  </section>
+
+  <section class="card stack" aria-labelledby="h-facts">
+    <h2 id="h-facts">Facts extracted <span class="muted small">{{ (d.facts or [])|length }}</span></h2>
+    <div>{% for x in d.facts or [] %}<div class="list-row small">{{ x }}</div>{% else %}<p class="small muted">None.</p>{% endfor %}</div>
+  </section>
+
+  {% if d.dropped %}
+  <section class="card stack" aria-labelledby="h-drop">
+    <h2 id="h-drop">Dropped before storing</h2>
+    <div>{% for x in d.dropped %}
+      <div class="list-row">{% if x is mapping %}<span class="kind k-{{ x.kind }}">{{ x.kind|kindlabel }}</span><span style="flex:1">{{ x.summary }}<div class="tiny muted">{{ x.reason }}</div></span>{% else %}<span class="small">{{ x }}</span>{% endif %}</div>
+    {% endfor %}</div>
+  </section>
+  {% endif %}
+{% endif %}
+</div>
+{% endblock %}

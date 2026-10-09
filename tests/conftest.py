@@ -31,6 +31,7 @@ async def engine():
     eng = create_async_engine(TEST_DB_URL, future=True)
     from src.models import Base
     import src.memory.models  # noqa: F401  registers memory tables
+    import src.eval.models  # noqa: F401  registers evaluation tables
 
     # CREATE EXTENSION requires superuser and cannot run inside a transaction block;
     # use a raw autocommit connection so a permission error is isolated.

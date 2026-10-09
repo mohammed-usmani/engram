@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Evaluation · Engram{% endblock %}
+{% macro status_chip(st) -%}
+<span class="chip {{ {'ok': 'green', 'warn': 'amber', 'bad': 'red'}.get(st, '') }}">{{ {'ok': 'OK', 'warn': 'Warning', 'bad': 'Problem'}.get(st, st) }}</span>
+{%- endmacro %}
+{% macro value(v) -%}
+{%- if v is mapping %}{% for k, x in v.items() %}<span class="muted">{{ k }}</span> {{ value(x) }}{{ " · " if not loop.last }}{% endfor %}
+{%- elif v is iterable and v is not string %}{{ v|join(", ") }}
+{%- else %}{{ v }}{% endif -%}
+{%- endmacro %}
+{% block head %}<style>
+.layer { flex: 1 1 300px; display: flex; flex-direction: column; gap: 12px; }
+.score { font-family: var(--serif); font-size: 44px; font-weight: 600; line-height: 1; }
+.trend { display: flex; align-items: flex-end; gap: 3px; height: 34px; }
+.trend span { flex: 0 1 10px; min-height: 2px; border-radius: 2px 2px 0 0; background: var(--line-strong); }
+.trend span:last-child { background: var(--ink); }
+.check { border-top: 1px solid var(--sunk); padding: 12px 0; }
+.check:first-of-type { border-top: 0; }
+.check > summary { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; cursor: pointer; list-style: none; }
+.check > summary::-webkit-details-marker { display: none; }
+.check > summary::before { content: "▸"; color: var(--faint); font-size: 12px; }
+.check[open] > summary::before { content: "▾"; }
+.check .items { margin: 10px 0 0 22px; }
+.pair-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.q-off td { opacity: .55; }
+.list-plain { margin: 0; padding-left: 18px; }
+</style>{% endblock %}
+{% block body %}
+<div class="wrap">
+  <header class="page-head">
+    <div><h1>Evaluation</h1><div class="sub">Three checks on how well memory works: is the stored data clean, does recall find what it should, and does extraction pull the right things out of text. Health and recall run every night.</div></div>
+  </header>
+
+  <div class="row-wrap" style="align-items:stretch">
+    {% for kind, title, what in [("health", "Data health", "Contradictions, duplicates, unreadable dates, stuck jobs, backups."),
+                                 ("recall", "Recall questions", "Your golden questions, answered by fast recall."),
+                                 ("extract", "Extraction", "A fixed test set of texts with known answers.")] %}
+    {% set L = layers[kind] %}{% set last = L.last %}{% set s = last.summary if last else {} %}
+    <section class="card layer" aria-labelledby="h-{{ kind }}">
+      <div class="between"><h2 id="h-{{ kind }}">{{ title }}</h2>{% if last %}<span class="small muted">{{ last.finished_at|ago }} · {{ last.trigger }}</span>{% endif %}</div>
+      <p class="small muted">{{ what }}</p>
+      <div class="between" style="align-items:flex-end">
+        <span class="score">{{ last.score|round|int if last and last.score is not none else "—" }}</span>
+        {% if L.trend|length > 1 %}
+        <div class="trend" role="img" aria-label="Last {{ L.trend|length }} scores: {{ L.trend|map('round')|map('int')|join(', ') }}">
+          {% for sc in L.trend %}<span style="height:{{ [sc, 2]|max }}%" title="{{ sc|round|int }}"></span>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      <p class="small">
+        {% if not last %}<span class="muted">Never run.</span>
+        {% elif s.error %}<span style="color:var(--red)">Failed: {{ s.error }}</span>
+        {% elif kind == "health" %}{{ s.ok or 0 }} OK · {{ s.warn or 0 }} warnings · {{ s.bad or 0 }} problems
+        {% elif kind == "recall" %}{% if s.questions %}{{ s.passed }} of {{ s.questions }} passed · {{ s.must_hit }}% of must-haves found · {{ s.forbidden_hits }} forbidden hits · median {{ s.median_ms }} ms{% else %}<span class="muted">No active questions to run.</span>{% endif %}
+        {% else %}{{ s.provider }} · {{ s.model }} · {{ s.passed }} of {{ s.total }} checks · {{ s.errors }} errors{% if s.median_s is not none %} · median {{ s.median_s }} s{% endif %}{% endif %}
+      </p>
+      <div style="flex:1"></div>
+      {% if kind == "extract" %}
+      <label class="field"><span class="label">Model</span>
+        <select class="select" id="extract-model">
+          {% for p in composer.usable %}<optgroup label="{{ p.label }}">
+            {% for m in p.models %}{% set v = p.provider ~ '|' ~ m %}<option value="{{ v }}" {{ 'selected' if v == composer.selected }}>{{ m or 'default model' }}</option>{% endfor %}
+          </optgroup>{% endfor %}
+        </select></label>
+      <p class="tiny muted">Makes about {{ cases }} real LLM calls: a fraction of a cent on DashScope, free on Ollama but slower.</p>
+      {% endif %}
+      <button class="btn primary" data-run="{{ kind }}" {{ 'disabled aria-busy=true' if kind in running }}>{{ "Running…" if kind in running else "Run now" }}</button>
+    </section>
+    {% endfor %}
+  </div>
+
+  {# ---------------------------------------------------------------- health #}
+  {% set hl = layers.health.last %}
+  <section class="card stack" aria-labelledby="h-health-d">
+    <div class="between"><h2 id="h-health-d">Data health</h2>{% if hl %}<span class="small muted">Run #{{ hl.id }} · {{ hl.finished_at|ago }}</span>{% endif %}</div>
+    {% if hl and hl.details %}
+    <div>
+    {% for c in hl.details %}
+      <details class="check" id="check-{{ c.id }}" {{ 'open' if c.id == 'contradictions' and c['items'] }}>
+        <summary>
+          {{ status_chip(c.status) }}
+          <b style="flex:1 1 200px">{{ c.title }}</b>
+          <span class="mono small">{{ c.value }}</span>
+          {% if c.href %}<a class="btn sm" href="{{ c.href }}">Fix</a>{% endif %}
+          <span class="small muted" style="flex-basis:100%;padding-left:22px">{{ c.detail }}</span>
+        </summary>
+        <div class="items stack" style="gap:8px">
+        {% if c.id == "contradictions" %}
+          {% for p in c['items'] %}
+          <div class="stack soft" style="gap:8px" id="pair-{{ loop.index }}">
+            <div class="pair-grid"><div class="card tight small">{{ p.a }}</div><div class="card tight small">{{ p.b }}</div></div>
+            <div class="inline small">
+              <span class="chip">{{ p.why }} · {{ p.similarity }} alike</span>
+              {% if p.verdict %}<span class="chip red">Judge: conflict</span>{% else %}<span class="chip">Not judged yet</span>{% endif %}
+              {% if p.judge %}<span class="muted">“{{ p.judge }}”</span>{% endif %}
+              <span style="flex:1"></span>
+              <a class="btn sm ghost" href="/facts?q={{ p.a.split()[:5]|join(' ')|urlencode }}">Open in Facts</a>
+              <button class="btn sm" data-api="POST /api/evals/health/verdict" data-body='{{ {"a_id": p.a_id, "b_id": p.b_id, "contradict": false}|tojson }}'
+                      data-then="remove:#pair-{{ loop.index }}|toast:Marked as not a conflict. Run health again to update the score.">Not a conflict</button>
+            </div>
+          </div>
+          {% else %}<span class="small muted">Nothing to show.</span>{% endfor %}
+        {% else %}
+          {% for it in c['items'] %}<div class="small">{{ value(it) }}</div>
+          {% else %}<span class="small muted">No individual items for this check.</span>{% endfor %}
+        {% endif %}
+        </div>
+      </details>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">No health run yet. Click “Run now” on Data health: it's plain database queries, plus one cheap LLM call to judge possible contradictions.</div>
+    {% endif %}
+  </section>
+
+  {# ---------------------------------------------------------------- golden questions #}
+  <section class="card stack" id="questions" aria-labelledby="h-q">
+    <div class="between">
+      <div><h2 id="h-q">Golden questions</h2><p class="small muted">A situation, text the brief must contain, and text it must not (e.g. “8.27” but not “8.0”). Results are from the latest recall run{{ " (#" ~ layers.recall.last.id ~ ", " ~ layers.recall.last.finished_at|ago ~ ")" if layers.recall.last }}.</p></div>
+      <button class="btn" data-new-q>Add question</button>
+    </div>
+    {% if questions %}
+    <div class="scroll-x"><table class="t" style="min-width:860px">
+      <thead><tr><th scope="col">Situation</th><th scope="col">Must contain</th><th scope="col">Must not</th><th scope="col">Last result</th><th scope="col"><span class="sr">Actions</span></th></tr></thead>
+      <tbody>
+      {% for q in questions %}{% set r = results.get(q.id) %}
+        <tr id="q-{{ q.id }}" class="{{ '' if q.active else 'q-off' }}">
+          <td style="max-width:300px">{{ q.situation }}{% if not q.active %} <span class="chip">paused</span>{% endif %}
+            {% if q.note %}<div class="tiny muted">{{ q.note }}</div>{% endif %}
+            <div class="tiny"><a href="/recall?situation={{ q.situation|urlencode }}">Open in inspector</a>{% if q.trace_id %} · <a href="/traces/{{ q.trace_id }}">origin trace</a>{% endif %}</div></td>
+          <td class="small">{{ q.must|join(", ") or "—" }}</td>
+          <td class="small">{{ q.must_not|join(", ") or "—" }}</td>
+          <td class="small" id="res-{{ q.id }}">
+            {% if r %}
+              <span class="chip {{ 'green' if r.passed else 'red' }}">{{ "Pass" if r.passed else "Fail" }}</span>
+              {% if r.missing %}<div class="tiny">Missing: {{ r.missing|join(", ") }}</div>{% endif %}
+              {% if r.forbidden %}<div class="tiny">Found forbidden: {{ r.forbidden|join(", ") }}</div>{% endif %}
+              <div class="tiny muted">{{ r['items'] }} items · {{ r.ms }} ms{% if r.trace_id %} · <a href="/traces/{{ r.trace_id }}">trace</a>{% endif %}</div>
+            {% else %}<span class="muted">Not run yet</span>{% endif %}
+          </td>
+          <td><div class="inline" style="flex-wrap:nowrap;gap:4px">
+            <button class="btn sm" data-check="{{ q.id }}">Check</button>
+            <button class="btn sm ghost" data-edit='{{ q|tojson }}'>Edit</button>
+            <button class="btn sm ghost" data-api="PUT /api/evals/questions/{{ q.id }}" data-body='{{ dict(q, active=not q.active)|tojson }}'
+                    data-then="reload">{{ "Pause" if q.active else "Resume" }}</button>
+            <button class="btn sm ghost danger" data-api="DELETE /api/evals/questions/{{ q.id }}" data-confirm="Delete this golden question?"
+                    data-then="remove:#q-{{ q.id }}|toast:Deleted">Delete</button>
+          </div></td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% else %}
+    <div class="empty">No golden questions yet. Add one here, or run a situation in the <a href="/recall">Recall inspector</a> and click “Save as test”.</div>
+    {% endif %}
+  </section>
+
+  {# ---------------------------------------------------------------- extraction #}
+  {% set xl = layers.extract.last %}
+  <section class="card stack" aria-labelledby="h-x">
+    <div class="between"><h2 id="h-x">Extraction test set</h2>{% if xl %}<span class="small muted">Run #{{ xl.id }} · {{ xl.summary.provider }} · {{ xl.summary.model }} · {{ xl.finished_at|ago }}</span>{% endif %}</div>
+    {% if xl and xl.details %}
+    <p class="small muted">Cases marked REG are regressions taken from real failures.</p>
+    <div class="scroll-x"><table class="t" style="min-width:720px">
+      <thead><tr><th scope="col">Case</th><th scope="col">Result</th><th scope="col">Failed checks</th><th scope="col">Time</th></tr></thead>
+      <tbody>
+      {% for c in xl.details %}
+        <tr>
+          <td style="max-width:360px">{% if c.case.startswith("REG ") %}<span class="chip amber">REG</span> {{ c.case[4:] }}{% else %}{{ c.case }}{% endif %}
+            {% if c.output %}<details><summary class="tiny" style="cursor:pointer">What the model returned</summary>
+              <div class="stack small" style="gap:6px;margin-top:6px">
+                <div><span class="label">Events</span>{% for e in c.output.episodes %}<div>{{ e }}</div>{% else %}<div class="muted">none</div>{% endfor %}</div>
+                <div><span class="label">Facts</span>{% for x in c.output.facts %}<div>{{ x }}</div>{% else %}<div class="muted">none</div>{% endfor %}</div>
+                {% if c.output.dropped %}<div><span class="label">Dropped</span>{% for x in c.output.dropped %}<div>{{ value(x) }}</div>{% endfor %}</div>{% endif %}
+              </div></details>{% endif %}</td>
+          <td><span class="chip {{ 'green' if c.passed == c.total else 'red' if c.passed == 0 else 'amber' }}">{{ c.passed }} / {{ c.total }}</span></td>
+          <td class="small">{% if c.error %}<span style="color:var(--red)">Error: {{ c.error }}</span>{% else %}{{ c.failed|join(", ") or "—" }}{% endif %}</td>
+          <td class="mono small">{{ c.seconds ~ " s" if c.seconds is not none else "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% else %}
+    <div class="empty">No extraction run yet. Pick a model on the Extraction card above and click “Run now”.</div>
+    {% endif %}
+  </section>
+</div>
+
+<dialog id="q-dialog" aria-labelledby="q-title">
+  <form id="q-form" class="stack" data-api="POST /api/evals/questions" data-then="toast:Saved|reload">
+    <h2 id="q-title">Add a golden question</h2>
+    <label class="field"><span class="label">Situation</span><input class="input" name="situation" required minlength="3" placeholder="What an assistant would be asked"></label>
+    <label class="field"><span class="label">Must contain (one per line)</span><textarea class="input" name="must" data-type="lines" rows="3" style="min-height:80px"></textarea></label>
+    <label class="field"><span class="label">Must not contain (one per line)</span><textarea class="input" name="must_not" data-type="lines" rows="2" style="min-height:64px"></textarea></label>
+    <div class="inline">
+      <label class="field"><span class="label">Budget</span><input class="input" type="number" name="budget" data-type="int" min="200" max="8000" step="100" value="1500" style="width:120px"></label>
+      <label class="field" style="flex:1"><span class="label">Note</span><input class="input" name="note" data-type="null-empty" maxlength="500"></label>
+    </div>
+    <label class="inline small"><input type="checkbox" name="active" checked> Active (included in recall runs)</label>
+    <div class="inline" style="justify-content:flex-end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block scripts %}<script>
+(function () {
+  const esc = (s) => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+  const LABEL = { health: 'Health', recall: 'Recall', extract: 'Extraction' };
+
+  async function poll(kind) {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const s = await Engram.api('GET', '/api/evals/status');
+        if (!s.running.includes(kind)) { Engram.toastAfterReload(LABEL[kind] + ' evaluation finished'); location.reload(); return; }
+      } catch (_) { /* server busy or restarting: keep waiting */ }
+    }
+  }
+  document.querySelectorAll('[data-run][disabled]').forEach((b) => poll(b.dataset.run));
+
+  document.addEventListener('click', async (e) => {
+    const run = e.target.closest('[data-run]');
+    if (run) {
+      const kind = run.dataset.run, body = { kind };
+      if (kind === 'extract') {
+        const [provider, ...m] = (document.getElementById('extract-model').value || '').split('|');
+        if (provider) { body.provider = provider; body.model = m.join('|') || null; }
+      }
+      run.disabled = true; run.setAttribute('aria-busy', 'true'); run.textContent = 'Running…';
+      try { await Engram.api('POST', '/api/evals/run', body); poll(kind); }
+      catch (err) { Engram.toast(err.message, 'error'); run.disabled = false; run.removeAttribute('aria-busy'); run.textContent = 'Run now'; }
+      return;
+    }
+    const check = e.target.closest('[data-check]');
+    if (check) {
+      const id = check.dataset.check, cell = document.getElementById('res-' + id);
+      check.disabled = true; check.setAttribute('aria-busy', 'true');
+      try {
+        const r = await Engram.api('POST', `/api/evals/questions/${id}/check`);
+        cell.innerHTML = `<span class="chip ${r.passed ? 'green' : 'red'}">${r.passed ? 'Pass' : 'Fail'}</span> <span class="tiny muted">just now</span>`
+          + (r.missing.length ? `<div class="tiny">Missing: ${esc(r.missing.join(', '))}</div>` : '')
+          + (r.forbidden.length ? `<div class="tiny">Found forbidden: ${esc(r.forbidden.join(', '))}</div>` : '')
+          + `<div class="tiny muted">${r.items} items · ${r.ms} ms${r.trace_id ? ` · <a href="/traces/${r.trace_id}">trace</a>` : ''}</div>`;
+      } catch (err) { Engram.toast(err.message, 'error'); }
+      finally { check.disabled = false; check.removeAttribute('aria-busy'); }
+      return;
+    }
+    const edit = e.target.closest('[data-edit]'), add = e.target.closest('[data-new-q]');
+    if (edit || add) {
+      const q = edit ? JSON.parse(edit.dataset.edit) : { situation: '', must: [], must_not: [], budget: 1500, note: '', active: true };
+      const f = document.getElementById('q-form');
+      f.dataset.api = edit ? `PUT /api/evals/questions/${q.id}` : 'POST /api/evals/questions';
+      document.getElementById('q-title').textContent = edit ? 'Edit golden question' : 'Add a golden question';
+      f.situation.value = q.situation; f.must.value = q.must.join('\n'); f.must_not.value = q.must_not.join('\n');
+      f.budget.value = String(q.budget); f.note.value = q.note || ''; f.active.checked = q.active;
+      document.getElementById('q-dialog').showModal();
+    }
+  });
+})();
+</script>{% endblock %}

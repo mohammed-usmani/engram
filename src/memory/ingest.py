@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text as sql
@@ -149,6 +150,9 @@ async def process_job(session: AsyncSession, job: IngestJob, extraction=None) ->
     job_id = job.id
     job.status, job.attempts = "processing", job.attempts + 1
     await session.commit()
+    t0 = time.monotonic()
+    from src.memory.llm import LAST_CALL
+    LAST_CALL.set(None)
     try:
         async with _WRITE_LOCK:
             await _undo_partial(session, job)
@@ -202,6 +206,7 @@ async def process_job(session: AsyncSession, job: IngestJob, extraction=None) ->
             job.result = {"episodes": n_eps, "facts": len(new_facts), "entities": sorted(touched),
                           "notes": len(ex.session_notes), "fact_ids": [f for f, _ in new_facts], **rec}
             await session.commit()
+            await _trace_job(session, job, ex, extraction is not None, t0, None)
             return job.result
     except Exception as e:
         await session.rollback()
@@ -216,7 +221,28 @@ async def process_job(session: AsyncSession, job: IngestJob, extraction=None) ->
             job.status = "failed" if job.attempts >= MAX_ATTEMPTS else "pending"
         await session.commit()
         log.warning("ingest job %s attempt %s failed: %s", job.id, job.attempts, e)
+        await _trace_job(session, job, None, extraction is not None, t0, job.error)
         return {"error": job.error}
+
+
+async def _trace_job(session: AsyncSession, job: IngestJob, ex, batched: bool, t0: float, error: str | None) -> None:
+    """One trace per extraction attempt: what came in, who extracted it, what was kept, dropped or failed."""
+    from src.eval.traces import record
+    from src.memory.llm import LAST_CALL
+    call = LAST_CALL.get() or {}
+    r = job.result or {}
+    data = {"job_id": job.id, "attempt": job.attempts, "batched": batched,
+            "provider": "together-batch" if batched else call.get("provider"), "model": call.get("model"),
+            "provider_errors": call.get("errors") or [], "error": error,
+            "episodes": [{"kind": e["kind"], "summary": e["summary"], "date": e["occurred_at"].date().isoformat()}
+                         for e in (ex.episodes if ex else [])],
+            "facts": [f["text"] for f in (ex.facts if ex else [])][:40],
+            "dropped": ex.dropped if ex else [], "stored": {k: r.get(k) for k in ("episodes", "facts", "superseded", "duplicates")}}
+    flags = [f for f, on in (("failed", bool(error)), ("dropped_events", bool(ex and ex.dropped)),
+                             ("fallback_used", bool(call.get("errors")) and not error),
+                             ("nothing_extracted", bool(ex) and not ex.episodes and not ex.facts and not ex.procedures),
+                             ("duplicates_skipped", bool(ex) and len(ex.episodes) > (r.get("episodes") or 0))) if on]
+    await record(session, "extract", job.agent, job.text, data, flags, int((time.monotonic() - t0) * 1000))
 
 
 _OUTAGE = (LLMUnavailable, ConnectionError, httpx.ConnectError, httpx.TimeoutException)

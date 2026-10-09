@@ -123,6 +123,7 @@ class RecallIn(BaseModel):
     budget_tokens: int = Field(1500, ge=100, le=8000)
     session_id: str | None = None
     fast: bool = Field(False, description="Skip the LLM planner (no network LLM call)")
+    agent: str | None = Field(None, max_length=64, description="Who is asking, e.g. claude-code (shown in traces)")
 
 
 @router.post("/remember", status_code=202)
@@ -167,7 +168,9 @@ async def teach(body: TeachIn, session: AsyncSession = Depends(get_session)):
 
 @router.post("/recall")
 async def recall(body: RecallIn, session: AsyncSession = Depends(get_session)):
-    return await rc.recall(session, body.situation, body.budget_tokens, body.session_id, body.fast)
+    who = (body.agent or "").strip().lower()[:24]
+    return await rc.recall(session, body.situation, body.budget_tokens, body.session_id, body.fast,
+                           source=f"rest:{who}" if who else "rest")
 
 
 @router.get("/item/{item_id}")

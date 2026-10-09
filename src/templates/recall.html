@@ -26,6 +26,14 @@
   <p class="small muted" id="status">Pinned text limit: {{ ((recall.pinned_cap or 1) * 100)|round|int }}% of the budget{% if recall.self_entity %} · “you” is {{ recall.self_entity }}{% endif %} · <a href="/settings#h-recall">change</a>. “With planner” makes one LLM call.</p>
 
   <div id="out" class="stack" style="gap:20px" hidden>
+    <div class="card tight inline" id="trace-bar" hidden>
+      <span class="small muted">Was this brief right?</span>
+      <button class="btn sm ghost" id="fb-up" data-body='{"value": 1}' data-then="toast:Marked good" aria-label="Good">👍</button>
+      <button class="btn sm ghost" id="fb-down" data-body='{"value": -1}' data-then="toast:Marked bad" aria-label="Bad">👎</button>
+      <a class="small" id="trace-link" href="#">View trace</a>
+      <span style="flex:1"></span>
+      <button class="btn sm" data-open="#test-dialog">Save as test</button>
+    </div>
     <section class="card stack">
       <div class="between"><h2>Where the budget went</h2><span><b id="used"></b> <span class="muted" id="of"></span></span></div>
       <div class="budget" id="bar" role="img"></div>
@@ -47,6 +55,17 @@
     </div>
   </div>
 </div>
+<dialog id="test-dialog" aria-labelledby="test-title">
+  <form class="stack" id="test-form" data-api="POST /api/evals/questions" data-then="toast:Saved as a golden question">
+    <h2 id="test-title">Save as test</h2>
+    <p class="small muted">Recall runs this every night and fails if the brief is missing something it must contain, or contains something it must not.</p>
+    <label class="field"><span class="label">Situation</span><input class="input" name="situation" required minlength="3"></label>
+    <label class="field"><span class="label">Must contain (one per line)</span><textarea class="input" name="must" data-type="lines" rows="3" style="min-height:80px" placeholder="e.g. 8.27"></textarea></label>
+    <label class="field"><span class="label">Must not contain (one per line)</span><textarea class="input" name="must_not" data-type="lines" rows="2" style="min-height:64px" placeholder="e.g. 8.0"></textarea></label>
+    <input type="hidden" name="budget" data-type="int"><input type="hidden" name="trace_id" data-type="int">
+    <div class="inline" style="justify-content:flex-end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+  </form>
+</dialog>
 {% endblock %}
 {% block scripts %}<script>
 const RECALL = {{ recall|tojson }};
@@ -101,7 +120,16 @@ function render(r) {
     <td><span class="chip ${c.in_brief ? 'green' : ''}">${c.in_brief ? 'in brief' : 'no room'}</span></td></tr>`).join('')
     || '<tr><td colspan="7" class="muted">Nothing matched.</td></tr>';
   document.getElementById('brief').textContent = r.brief || '(empty)';
+  const tf = document.getElementById('test-form');
+  tf.situation.value = document.querySelector('#inspect [name=situation]').value;
+  tf.budget.value = x.budget; tf.trace_id.value = r.trace_id || '';
+  document.getElementById('trace-bar').hidden = !r.trace_id;
+  if (r.trace_id) {
+    for (const id of ['fb-up', 'fb-down']) document.getElementById(id).dataset.api = `POST /api/traces/${r.trace_id}/feedback`;
+    document.getElementById('trace-link').href = '/traces/' + r.trace_id;
+  }
 }
+document.getElementById('test-form').addEventListener('engram:done', (e) => e.currentTarget.closest('dialog').close());
 
 document.getElementById('inspect').addEventListener('submit', run);
 document.getElementById('copy').addEventListener('click', async () => {

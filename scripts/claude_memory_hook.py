@@ -58,7 +58,8 @@ def main() -> None:
 
     if name == "UserPromptSubmit" and _first_prompt(sid):
         out = _post("/api/memory/recall", {"situation": f"{event.get('prompt', '')}\n(project: {project})",
-                                           "session_id": sid, "budget_tokens": 800, "fast": True}, timeout=4)
+                                           "session_id": sid, "budget_tokens": 800, "fast": True,
+                                           "agent": "claude-code-hook"}, timeout=4)
         if out.get("items") or "so far" in out.get("brief", ""):
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",

@@ -98,7 +98,7 @@
     <form class="stack" data-api="POST /api/evals/questions" data-body='{{ {"trace_id": t.id}|tojson }}' data-then="toast:Saved as a golden question|redirect:/evals#questions">
       <h2 id="gq-title">Save as golden question</h2>
       <label class="field"><span class="label">Situation</span><input class="input" name="situation" required minlength="3" value="{{ t.input[:2000] }}"></label>
-      <label class="field"><span class="label">Must contain (one per line)</span><textarea class="input" name="must" data-type="lines" rows="3" style="min-height:80px" placeholder="e.g. 8.27"></textarea></label>
+      <label class="field"><span class="label">Must contain (one per line)</span><textarea class="input" name="must" data-type="lines" rows="3" style="min-height:80px" placeholder="e.g. 3.9"></textarea></label>
       <label class="field"><span class="label">Must not contain (one per line)</span><textarea class="input" name="must_not" data-type="lines" rows="2" style="min-height:64px" placeholder="e.g. 8.0"></textarea></label>
       <input type="hidden" name="budget" data-type="int" value="{{ d.budget or 1500 }}">
       <div class="inline" style="justify-content:flex-end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>

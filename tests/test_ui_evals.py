@@ -88,7 +88,7 @@ async def test_trace_detail_pages(client, session):
     ids = {t["input"][:7]: t["id"] for t in (await client.get("/api/traces?limit=10", headers=LOCAL)).json()}
     rec = (await client.get(f"/traces/{ids['prep me']}", headers=LOCAL)).text
     assert XSS not in rec and "&lt;script&gt;" in rec
-    assert 'href="/events?focus=7"' in rec and "/facts?q=CGPA+is+8.27" in rec
+    assert 'href="/events?focus=7"' in rec and "/facts?q=GPA+is+3.9" in rec
     assert "Save as golden question" in rec and "company:acme" in rec and "cut from" not in rec
     ext = (await client.get(f"/traces/{ids['Applied']}", headers=LOCAL)).text
     assert "/queue#job-12" in ext and "no date in text" in ext and "Lives in Pune" in ext

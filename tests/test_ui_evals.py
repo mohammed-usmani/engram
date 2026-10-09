@@ -20,9 +20,9 @@ async def test_pages_render_empty(client):
 
 
 async def seed(session):
-    contradiction = {"a": "CGPA is 8.0", "b": "CGPA is 8.27", "a_id": "aaa", "b_id": "bbb", "similarity": 0.9,
+    contradiction = {"a": "GPA is 3.6", "b": "GPA is 3.9", "a_id": "aaa", "b_id": "bbb", "similarity": 0.9,
                      "why": "different numbers", "verdict": True, "judge": "two CGPAs for one degree"}
-    q = GoldenQuestion(situation="what is my CGPA", must=["8.27"], must_not=["8.0"])
+    q = GoldenQuestion(situation="what is my GPA", must=["3.9"], must_not=["3.6"])
     session.add(q)
     await session.flush()
     session.add_all([
@@ -34,8 +34,8 @@ async def seed(session):
              "detail": "0 groups", "items": [{"names": ["Redfox", "Redfox Cyber"]}], "href": "/cleanup#merge"}]),
         EvalRun(kind="recall", score=0, finished_at=NOW, summary={"questions": 1, "passed": 0, "must_hit": 0,
                 "forbidden_hits": 1, "pinned_share": 10, "median_ms": 40, "max_ms": 40},
-                details=[{"id": q.id, "situation": q.situation, "passed": False, "missing": ["8.27"], "forbidden": ["8.0"],
-                          "must": ["8.27"], "must_not": ["8.0"], "used": 100, "pinned": 10, "items": 3, "ms": 40,
+                details=[{"id": q.id, "situation": q.situation, "passed": False, "missing": ["3.9"], "forbidden": ["3.6"],
+                          "must": ["3.9"], "must_not": ["3.6"], "used": 100, "pinned": 10, "items": 3, "ms": 40,
                           "trace_id": None}]),
         EvalRun(kind="extract", score=50, finished_at=NOW, summary={"provider": "ollama", "model": "qwen", "passed": 1,
                 "total": 2, "errors": 0, "median_s": 1.5, "max_s": 2},
@@ -47,7 +47,7 @@ async def seed(session):
               "plan": {"entities": ["company:acme"], "excluded": [], "weights": {"episode": 1.0}, "planner": "off"},
               "sections": [{"title": "Profile", "tokens": 30, "pinned": True}, {"title": "History", "tokens": 10, "pinned": False}],
               "timings": {"embed_ms": 5, "plan_ms": 0, "pinned_ms": 3, "rank_ms": 9},
-              "brief": "## History\n- [e:7] Applied to Acme\n- [f:0a1b2c3d-1111] CGPA is 8.27"}),
+              "brief": "## History\n- [e:7] Applied to Acme\n- [f:0a1b2c3d-1111] GPA is 3.9"}),
         Trace(kind="extract", source="worker", input="Applied to Globex", flags=["dropped_events"], duration_ms=900,
               data={"job_id": 12, "attempt": 1, "batched": False, "provider": "ollama", "model": "qwen",
                     "provider_errors": [], "error": None, "episodes": [{"kind": "applied", "summary": "Applied to Globex", "date": "2026-10-01"}],
@@ -64,8 +64,8 @@ async def test_evals_page_with_runs_and_questions(client, session):
     assert r.status_code == 200, r.text
     t = r.text
     assert "two CGPAs for one degree" in t and "Not a conflict" in t and "/api/evals/health/verdict" in t
-    assert "/facts?q=CGPA%20is%208.0" in t
-    assert "Missing: 8.27" in t and "Found forbidden: 8.0" in t and "/recall?situation=what%20is%20my%20CGPA" in t
+    assert "/facts?q=GPA%20is%203.6" in t
+    assert "Missing: 3.9" in t and "Found forbidden: 3.6" in t and "/recall?situation=what%20is%20my%20GPA" in t
     assert "REG</span> plan is not an application" in t and "no applied event" in t
     assert XSS not in t and "&lt;script&gt;" in t
     assert 'aria-label="Last 2 scores: 95, 80"' in t   # trend is oldest to newest from real runs

@@ -24,7 +24,7 @@ async def _seed(engine):
 
 def test_number_matching_is_exact():
     from src.eval.recall_eval import _contains
-    assert _contains("CGPA 8.27/10", "8.27") and not _contains("CGPA 8.27/10", "8.2")
+    assert _contains("GPA 3.94/4", "3.94") and not _contains("GPA 3.94/4", "3.9")
     assert not _contains("CGPA 8.07", "8.0") and _contains("CGPA of 8.0.", "8.0")
     assert _contains("Due:  2026-10-07", "due: 2026-10-07")
 

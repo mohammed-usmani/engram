@@ -22,7 +22,7 @@ _PAST = re.compile(r"\b(previously|formerly|used to|no longer)\s+(work|was|were|
 
 def _nums(text: str) -> set[float]:
     return {float(n) for n in _NUM.findall(text or "")}
-CONFLICT_SIM = 0.82  # measured on real data: the CGPA 8.0 / 8.27 pair scores ~0.9, unrelated facts with numbers < 0.75
+CONFLICT_SIM = 0.82  # measured on real data: a GPA 3.6 vs 3.9 pair scores ~0.9, unrelated facts with numbers < 0.75
 
 
 def _check(id: str, title: str, status: str, value, detail: str, items: list | None = None, href: str = "") -> dict:
@@ -67,7 +67,7 @@ async def _judge(session: AsyncSession, pairs: list[dict]) -> None:
 
 
 async def contradictions(session: AsyncSession, judge: bool = True) -> dict:
-    """Pairs of near-identical current facts that disagree on a number (8.0 vs 8.27) or on tense
+    """Pairs of near-identical current facts that disagree on a number (3.6 vs 3.9) or on tense
     ("works at" vs "previously worked at")."""
     t = facts.table()
     rows = (await session.execute(sql(f"""

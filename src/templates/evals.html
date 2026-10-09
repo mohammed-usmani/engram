@@ -116,7 +116,7 @@
   {# ---------------------------------------------------------------- golden questions #}
   <section class="card stack" id="questions" aria-labelledby="h-q">
     <div class="between">
-      <div><h2 id="h-q">Golden questions</h2><p class="small muted">A situation, text the brief must contain, and text it must not (e.g. “8.27” but not “8.0”). Results are from the latest recall run{{ " (#" ~ layers.recall.last.id ~ ", " ~ layers.recall.last.finished_at|ago ~ ")" if layers.recall.last }}.</p></div>
+      <div><h2 id="h-q">Golden questions</h2><p class="small muted">A situation, text the brief must contain, and text it must not (e.g. “3.9” but not “3.6”). Results are from the latest recall run{{ " (#" ~ layers.recall.last.id ~ ", " ~ layers.recall.last.finished_at|ago ~ ")" if layers.recall.last }}.</p></div>
       <button class="btn" data-new-q>Add question</button>
     </div>
     {% if questions %}

@@ -1,5 +1,5 @@
 """Layer 2: golden questions. Each must find certain text in the recall brief and must not find other text
-(e.g. "8.27" but not "8.0"). Fast recall (no LLM), so it costs nothing to run nightly."""
+(e.g. "3.9" but not "3.6"). Fast recall (no LLM), so it costs nothing to run nightly."""
 from __future__ import annotations
 
 import re

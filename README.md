@@ -296,7 +296,7 @@ the **Evaluation** and **Traces** pages show where.
 | Layer | What it checks | Cost |
 |---|---|---|
 | **Data health** | Facts that contradict each other (look-alike pairs with different numbers or tense, confirmed by one batched LLM call and cached), duplicate events, one thing under two topic names, one-off topics, unreadable or wrong-weekday dates, oversized facts, failed queue jobs, recall and extraction quality from the last 7 days of traces, backup age | free + a fraction of a cent |
-| **Golden questions** | Questions you'd really ask, each with text the brief must contain and must not contain (e.g. "8.27", not "8.0"). Save one from the Recall inspector or a trace | free (fast recall) |
+| **Golden questions** | Questions you'd really ask, each with text the brief must contain and must not contain (e.g. "3.9", not "3.6"). Save one from the Recall inspector or a trace | free (fast recall) |
 | **Extraction test set** | The labelled cases above, against any provider/model, without changing what live extraction uses | ~20 LLM calls |
 | **Traces** | Every recall (who asked, plan, planner status, items, budget by section, timings, the brief) and every extraction (provider, fallbacks, what was kept, what the grounding check dropped and why), kept 30 days, with 👍/👎 feedback | free |
 

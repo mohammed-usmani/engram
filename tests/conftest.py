@@ -9,6 +9,7 @@ from sqlalchemy import text
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+os.environ.setdefault("OLLAMA_LLM_ENABLED", "1")  # tests don't inherit a laptop's off switch
 load_dotenv()
 
 from src.database import get_session  # noqa: E402

@@ -11,12 +11,29 @@ def _client() -> AsyncClient:
     return AsyncClient(host=settings.ollama_base_url)
 
 
+class LocalLLMDisabled(RuntimeError):
+    """OLLAMA_LLM_ENABLED=0: Ollama serves embeddings only, never chat/completion calls."""
+
+
+def llm_enabled() -> bool:
+    """Running a local LLM can saturate a laptop; this switch keeps Ollama to embeddings."""
+    import os
+    return os.environ.get("OLLAMA_LLM_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def require_llm() -> None:
+    if not llm_enabled():
+        raise LocalLLMDisabled("Local Ollama LLM calls are turned off (OLLAMA_LLM_ENABLED=0); "
+                               "Ollama is used for embeddings only. Pick a cloud model in Settings.")
+
+
 async def generate(
     message: str,
     system: str = "",
     history: list[dict[str, str]] | None = None,
     model: str = "mistral:latest",
 ) -> str:
+    require_llm()
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})

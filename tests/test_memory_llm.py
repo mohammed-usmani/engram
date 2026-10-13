@@ -91,3 +91,24 @@ async def test_slow_provider_times_out_and_falls_through(fakes, monkeypatch):
     t = asyncio.get_running_loop().time()
     assert await llm.complete_json("x") == {"ok": 1}
     assert asyncio.get_running_loop().time() - t < 1  # gave up on the slow provider, didn't wait it out
+
+
+async def test_switch_keeps_ollama_to_embeddings_only(monkeypatch):
+    """OLLAMA_LLM_ENABLED=0: no LLM route reaches Ollama (fallbacks, chat, legacy chat, eval), embeddings still do."""
+    import pytest
+    from src.services import ollama_client
+    monkeypatch.setenv("OLLAMA_LLM_ENABLED", "0")
+    monkeypatch.setenv("TOGETHER_API_KEY", "t")
+    llm.configure({}, {"extract": [("together", "m"), ("ollama", "qwen")]})
+    try:
+        assert llm.steps("extract") == [("together", "m")]         # fallback dropped
+        assert llm.steps("chat") == [] and llm.key_source("ollama") is None
+        with pytest.raises(ollama_client.LocalLLMDisabled):
+            llm.make("ollama")
+        with pytest.raises(ollama_client.LocalLLMDisabled):
+            await ollama_client.generate("hi")                        # legacy chat path
+        tok = llm.FORCE.set([("ollama", "qwen")])
+        assert llm.steps("extract") == []                            # eval can't force it either
+        llm.FORCE.reset(tok)
+    finally:
+        llm.configure({}, {})

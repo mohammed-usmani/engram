@@ -84,7 +84,8 @@
     <div class="settings-row" id="prov-{{ p.provider }}" style="align-items:flex-start">
       <div style="flex:1 1 220px" class="stack" style="gap:4px">
         <span class="inline" style="gap:8px"><span style="font-weight:600">{{ p.label }}</span>
-          {% if p.key_source == 'local' %}<span class="chip blue">Local</span>
+          {% if p.provider == 'ollama' and not p.key_source %}<span class="chip">Embeddings only</span>
+          {% elif p.key_source == 'local' %}<span class="chip blue">Local</span>
           {% elif p.key_source == 'saved' %}<span class="chip green">Key saved here</span>
           {% elif p.key_source == 'env' %}<span class="chip green">Key from .env</span>
           {% else %}<span class="chip">No key</span>{% endif %}</span>

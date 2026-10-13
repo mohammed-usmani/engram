@@ -34,6 +34,8 @@ class OllamaProvider(LLMProvider):
         history: list[dict[str, str]] | None = None,
         json: bool = False,
     ) -> str:
+        from src.services.ollama_client import require_llm
+        require_llm()
         messages = self._build_messages(message, system, history)
         # JSON calls are extraction work: reasoning models (qwen3, …) would spend a minute "thinking" first
         # and Ollama's default 4096-token window would silently truncate a session transcript.
@@ -48,6 +50,8 @@ class OllamaProvider(LLMProvider):
         system: str = "",
         history: list[dict[str, str]] | None = None,
     ) -> AsyncIterator[str]:
+        from src.services.ollama_client import require_llm
+        require_llm()
         messages = self._build_messages(message, system, history)
         stream = await _client().chat(model=self.model, messages=messages, stream=True)
         async for chunk in stream:

@@ -61,7 +61,8 @@ def env_key(name: str) -> str | None:
 def key_source(name: str) -> str | None:
     """'saved' (Settings page), 'env' (.env), 'local' (Ollama needs none) or None."""
     if name == "ollama":
-        return "local"
+        from src.services.ollama_client import llm_enabled
+        return "local" if llm_enabled() else None  # switched off: not offered anywhere as an LLM
     return "saved" if _saved_keys.get(name) else "env" if env_key(name) else None
 
 
@@ -79,15 +80,17 @@ def chain(task: str = "default") -> list[str]:
 def steps(task: str = "default") -> list[tuple[str, str | None]]:
     """(provider, model) pairs to try in order. Settings-page assignments for this task, else the
     extraction assignment, else MEMORY_LLM_CHAIN; providers without a key are skipped."""
+    from src.services.ollama_client import llm_enabled
     forced = FORCE.get()
     if forced:
-        return forced
+        return forced if llm_enabled() else [(n, m) for n, m in forced if n != "ollama"]
     chosen = _assign.get(task) or (_assign.get("extract") if task != "chat" else None)
+    local = llm_enabled()
     if chosen:
-        return [(n, m) for n, m in chosen if n == "ollama" or _key(n)]
+        return [(n, m) for n, m in chosen if (n == "ollama" and local) or (n != "ollama" and _key(n))]
     if task == "chat":
-        return [("ollama", None)]  # chat stays local and free unless the user picks otherwise
-    return [(n, None) for n in chain(task)]
+        return [("ollama", None)] if local else []  # chat stays local and free unless the user picks otherwise
+    return [(n, None) for n in chain(task) if local or n != "ollama"]
 
 
 def default_model(name: str) -> str | None:
@@ -100,6 +103,8 @@ def default_model(name: str) -> str | None:
 def _make(name: str, model: str | None = None) -> LLMProvider:
     model = model or default_model(name)
     if name == "ollama":
+        from src.services.ollama_client import require_llm
+        require_llm()  # OLLAMA_LLM_ENABLED=0 keeps Ollama to embeddings only
         return get_provider("ollama", model=model)
     return get_provider(name, api_key=_key(name), model=model, base_url=_base_urls.get(name))
 
